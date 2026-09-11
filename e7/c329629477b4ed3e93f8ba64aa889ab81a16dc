@@ -1,0 +1,50 @@
+scripts/aws-setup/teardown.sh
+  s_05ee375f1e3d59::t_dc2dcd72a5c959 52-54
+scripts/gcs-setup/teardown.sh
+  s_05ee375f1e3d59::t_bab98e1f5675c9 57-61
+docs/README.md
+  s_05ee375f1e3d59::t_e730245319c164 100,102
+docs/troubleshooting.md
+  s_05ee375f1e3d59::t_c2bb08f41b8a9d 228
+scripts/azure-setup/up.sh
+  s_05ee375f1e3d59::t_ecaca4cc2c8fd4 273-279
+scripts/gcs-setup/values-region.yaml.tmpl
+  s_05ee375f1e3d59::t_fdae8eacc9871e 60,89
+scripts/gcs-setup/up.sh
+  s_05ee375f1e3d59::t_ecaca4cc2c8fd4 199-205
+scripts/_lib/common.sh
+  s_05ee375f1e3d59::t_0b32a1888e634c 263-326
+scripts/azure-setup/teardown.sh
+  s_05ee375f1e3d59::t_3c986a49c01674 35-40
+scripts/azure-setup/values-region.yaml.tmpl
+  s_05ee375f1e3d59::t_fdae8eacc9871e 60,90
+scripts/azure-setup/README.md
+  s_05ee375f1e3d59::t_3810991847605d 158
+  s_05ee375f1e3d59::t_7b4777d0b26d48 145-152
+  s_05ee375f1e3d59::t_4f68b3b71e5c1a 82,93,142,208
+  s_05ee375f1e3d59::t_4e46a946e45c85 284
+scripts/gcs-setup/README.md
+  s_05ee375f1e3d59::t_5b078cd03d2dd2 209
+  s_05ee375f1e3d59::t_fe193a30162fef 385-390
+  s_05ee375f1e3d59::t_4f68b3b71e5c1a 114,124,240,264
+  s_05ee375f1e3d59::t_1ba34e1bfba8eb 175-188
+docs/operations.md
+  s_05ee375f1e3d59::t_2e60c47c6aade2 190-192,195
+  s_05ee375f1e3d59::t_7be29636a3e4dc 101,117-124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e7c329629477b4ed3e93f8ba64aa889ab81a16dc",
+  "prompts": {},
+  "sessions": {
+    "s_05ee375f1e3d59": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "188e3684-b6fd-4924-8daf-8c0a1c660225",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Borna Skukan <bskukan@daytona.io>"
+    }
+  }
+}
