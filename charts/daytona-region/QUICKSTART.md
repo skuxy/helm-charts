@@ -177,7 +177,42 @@ kubectl logs -n daytona -l app.kubernetes.io/component=runner -c daytona-binary-
 
 The `daytona-binary-installer` should report `installed /usr/local/bin/.tmp/binaries/daemon-amd64 (...bytes)` — this pre-stages the sandbox binary onto the node so sandbox containers can start.
 
-## 5. Upgrade
+## 5. Use it
+
+Two things trip up every first attempt at this — worth having here instead
+of reverse-engineering from `scripts/aws-setup/e2e.sh`'s source:
+
+1. **`target` goes on `DaytonaConfig`, not on `create()`.** There is no
+   `target=` kwarg on `daytona.create(...)` — passing one raises
+   `TypeError: Daytona.create() got an unexpected keyword argument 'target'`.
+   The region is set once, for the whole client:
+
+   ```python
+   from daytona import Daytona, DaytonaConfig, CreateSandboxFromImageParams, Image
+
+   daytona = Daytona(DaytonaConfig(
+       api_key="dtn_...",                # the ORG key, not a runner-scoped one
+       target="your-region-name",        # the region name you registered
+   ))
+   ```
+
+2. **There is no default snapshot in a BYOC region.** Daytona-managed
+   regions have an org-default snapshot (`daytonaio/sandbox:X`) that
+   `daytona.create()` falls back to when you don't specify one; that
+   snapshot is never replicated to custom BYOC regions. Calling
+   `daytona.create()` with no image fails with
+   `Snapshot daytonaio/sandbox:X is not available in region <your-region>`.
+   Always pass an explicit image:
+
+   ```python
+   sandbox = daytona.create(CreateSandboxFromImageParams(
+       image=Image.debian_slim("3.12"),  # or Image.base("alpine:3.21"), etc.
+   ))
+   sandbox.process.code_run("print('hello')")
+   sandbox.delete()
+   ```
+
+## 6. Upgrade
 
 After editing your values file:
 
@@ -189,7 +224,7 @@ helm upgrade region-my-1 ./charts/daytona-region \
 
 If you performed step 3b with `--set`, repeat the `--set services.sshGateway.apiKey=...` on every upgrade (or keep the key in a small extra values file passed via a second `-f`) — otherwise the gateway silently reverts to the bootstrap key and SSH sessions start failing with `403`.
 
-## 6. Uninstall
+## 7. Uninstall
 
 ```bash
 helm uninstall region-my-1 -n daytona
