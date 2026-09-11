@@ -260,6 +260,70 @@ omc::cloudflare_upsert_dns() {
   fi
 }
 
+# omc::daytona_deregister_region [namespace=daytona]
+#
+# Deregisters the region AND its runners from Daytona Cloud — the API refuses
+# DELETE /regions/:id while any runner is still attached, and refuses
+# DELETE /runners/:id while a runner is still schedulable, so this runs the
+# same unschedulable-then-draining-then-delete sequence the runner-reaper
+# CronJob already uses, per runner, before deleting the region itself.
+#
+# Despite every teardown.sh's own header comment (and the aws-setup README)
+# claiming teardown "also deregisters the region from Daytona Cloud", none of
+# them actually did until this was added — they only ran `helm uninstall`
+# (K8s resources) plus cloud-provider cleanup. The region and its runners
+# stayed registered in Daytona Cloud forever, orphaned, with their backing
+# infra gone. Cloud-agnostic (pure kubectl + curl to the Daytona API), so
+# shared across aws/azure/gcs-setup rather than tripled.
+#
+# Must run BEFORE any K8s/cloud teardown, since it needs the org API key +
+# region id from secrets that later steps delete. No-ops cleanly (WARN, not
+# a hard failure — teardown must keep going even if this can't complete) if
+# the namespace/secrets are already gone or unreadable.
+omc::daytona_deregister_region() {
+  local ns="${1:-daytona}"
+  if ! kubectl get ns "$ns" >/dev/null 2>&1 || ! kubectl get secret daytona-region-daytona-api-key -n "$ns" >/dev/null 2>&1; then
+    omc::log WARN "$ns namespace or API key secret not found — skipping Daytona Cloud deregistration (already torn down, or install never completed)."
+    return 0
+  fi
+
+  omc::log INFO "=== Deregistering region from Daytona Cloud ==="
+  local dtn_key region_id api_url
+  dtn_key="$(kubectl get secret daytona-region-daytona-api-key -n "$ns" -o jsonpath='{.data.daytona-api-key}' 2>/dev/null | base64 -d)"
+  region_id="$(kubectl get secret daytona-region-region-config -n "$ns" -o jsonpath='{.data.id}' 2>/dev/null | base64 -d)"
+  api_url="${DAYTONA_API_URL:-https://app.daytona.io/api}"
+  if [[ -z "$dtn_key" || -z "$region_id" ]]; then
+    omc::log WARN "Could not read API key/region id from secrets — skipping Daytona Cloud deregistration. Manual cleanup may be needed."
+    return 0
+  fi
+
+  local runner_ids rid code rcode
+  runner_ids="$(curl -sS -H "Authorization: Bearer ${dtn_key}" "${api_url}/runners?regionId=${region_id}" 2>/dev/null | jq -r '.[].id' 2>/dev/null)"
+  for rid in $runner_ids; do
+    curl -sS -o /dev/null -X PATCH -H "Content-Type: application/json" \
+      -H "Authorization: Bearer ${dtn_key}" -d '{"unschedulable":true}' \
+      "${api_url}/runners/${rid}/scheduling" 2>/dev/null
+    curl -sS -o /dev/null -X PATCH -H "Content-Type: application/json" \
+      -H "Authorization: Bearer ${dtn_key}" -d '{"draining":true}' \
+      "${api_url}/runners/${rid}/draining" 2>/dev/null
+    code="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+      -H "Authorization: Bearer ${dtn_key}" "${api_url}/runners/${rid}" 2>/dev/null)"
+    if [[ "$code" == "204" ]]; then
+      omc::log INFO "  deleted runner ${rid}"
+    else
+      omc::log WARN "  runner ${rid} delete returned HTTP ${code} (continuing)"
+    fi
+  done
+
+  rcode="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+    -H "Authorization: Bearer ${dtn_key}" "${api_url}/regions/${region_id}" 2>/dev/null)"
+  if [[ "$rcode" == "204" ]]; then
+    omc::log INFO "region ${region_id} deregistered from Daytona Cloud"
+  else
+    omc::log WARN "region deregistration returned HTTP ${rcode} — may need manual cleanup: DELETE ${api_url}/regions/${region_id}"
+  fi
+}
+
 # omc::cloudflare_region_dns TOKEN BASE_DOMAIN LB_TARGET
 # Upsert the region's routing records (proxy, *.proxy, snapshots) -> the ingress
 # LoadBalancer. CNAME for an AWS NLB hostname, A for an IP. ALL DNS-only: the
