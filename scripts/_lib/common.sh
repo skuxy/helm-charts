@@ -708,7 +708,14 @@ omc::helm_install_wait() {
   # pod (Helm 4 cleans up the failed hook before returning), so they are often
   # the only post-mortem signal left. They won't show the HTTP body, though — for
   # that, replicate the registration call (see docs / the GET checks below).
-  printf '----- recent events in %s -----\n' "$ns" >&2
+  #
+  # `echo`, not `printf`: macOS's system bash (/bin/bash, still 3.2.57 for
+  # license reasons) has a real bug where a `printf` call right after a
+  # `for x in $(...)` loop in the same function sees a stray `--` as its
+  # first arg ("printf: --: invalid option") instead of the format string —
+  # reproducible with or without loop iterations. This script silently swallowed
+  # the actual registration failure reason behind that crash.
+  echo "----- recent events in ${ns} -----" >&2
   kubectl get events -n "$ns" --sort-by=.lastTimestamp 2>/dev/null | tail -25 >&2 || true
   omc::die "helm install of $release failed"
 }
