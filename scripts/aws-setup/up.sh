@@ -97,6 +97,9 @@ omc::log INFO "Using AWS instance type: $AWS_NODE_VM_SIZE"
 
 # === 2. EKS cluster ==========================================================
 omc::log INFO "=== Step 2/9: EKS cluster ==="
+if ! eksctl get cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+  omc::aws_check_vpc_headroom "$AWS_REGION"
+fi
 # eksctl resolves the Ubuntu2404 AMI family only for k8s versions Canonical has
 # published a 24.04 image for IN THIS REGION; a hardcoded version without one
 # fails with "unable to determine AMI ... image family Ubuntu2404". Honor an

@@ -210,3 +210,32 @@ omc::aws_eks_ubuntu2404_version() {
   # Fallback: newest 24.04 AMI version (EKS version list unavailable/no overlap).
   printf '%s' "$(printf '%s\n' "$ami_versions" | head -n1)"
 }
+
+# omc::aws_check_vpc_headroom REGION
+#
+# eksctl creates a brand-new VPC per cluster by default; if the account is
+# already at (or one away from) the account's "VPCs per Region" quota
+# (default 5, L-F678F1CE), cluster creation fails ~30s in with a confusing
+# CloudFormation ROLLBACK_IN_PROGRESS and "The maximum number of VPCs has
+# been reached" buried in the stack events — after eksctl has already spent
+# time standing up the IAM role, EIP, and Internet Gateway that then all get
+# torn down again. Hit this for real dogfooding a BYOC install: cost a full
+# failed attempt before the actual cause was found. Check BEFORE eksctl
+# starts, not after, and suggest the concrete fix (another region has
+# near-certain headroom; a quota increase does not take effect immediately).
+#
+# Does not fail the build if the quota can't be read (e.g. servicequotas
+# permission denied) — same "degrade to unfiltered" philosophy as
+# aws_select_instance_type's own quota check.
+omc::aws_check_vpc_headroom() {
+  local region="$1"
+  local used quota
+  used="$(aws ec2 describe-vpcs --region "$region" --query 'length(Vpcs)' --output text 2>/dev/null)" || return 0
+  quota="$(aws service-quotas get-service-quota --region "$region" --service-code vpc --quota-code L-F678F1CE \
+    --query 'Quota.Value' --output text 2>/dev/null)" || return 0
+  [[ "$used" =~ ^[0-9]+$ && "$quota" =~ ^[0-9.]+$ ]] || return 0
+  local quota_int="${quota%.*}"
+  if (( used >= quota_int )); then
+    omc::die "AWS account is at its VPC quota in ${region} (${used}/${quota_int} — eksctl needs a spare VPC and will fail ~30s into cluster creation with a confusing CloudFormation rollback). Either request a quota increase (not immediate) or re-run with AWS_REGION set to a region with headroom, e.g.: AWS_REGION=us-west-2 ./up.sh"
+  fi
+}
