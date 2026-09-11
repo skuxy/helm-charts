@@ -415,23 +415,33 @@ omc::cluster_issuer_apply() {
   if [[ -z "$email" ]]; then
     omc::die "cluster_issuer_apply: email is required"
   fi
+
+  # See the matching STAGING note in cluster_issuer_apply_cf_dns01.
+  local issuer_name=letsencrypt-prod
+  local server=https://acme-v02.api.letsencrypt.org/directory
+  if [[ "${STAGING:-false}" == "true" ]]; then
+    issuer_name=letsencrypt-staging
+    server=https://acme-staging-v02.api.letsencrypt.org/directory
+    omc::log WARN "STAGING=true: using LE staging — certs will NOT be browser-trusted"
+  fi
+
   kubectl apply -f - <<EOF
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: letsencrypt-prod
+  name: ${issuer_name}
 spec:
   acme:
     email: ${email}
-    server: https://acme-v02.api.letsencrypt.org/directory
+    server: ${server}
     privateKeySecretRef:
-      name: letsencrypt-prod-account-key
+      name: ${issuer_name}-account-key
     solvers:
       - http01:
           ingress:
             class: nginx
 EOF
-  omc::log INFO "ClusterIssuer letsencrypt-prod applied (email=${email})"
+  omc::log INFO "ClusterIssuer ${issuer_name} applied (email=${email})"
 }
 
 # omc::cluster_issuer_apply_cf_dns01 EMAIL CF_API_TOKEN [ns=cert-manager]
@@ -451,6 +461,21 @@ omc::cluster_issuer_apply_cf_dns01() {
     omc::die "cluster_issuer_apply_cf_dns01: email and cf_token are required"
   fi
 
+  # STAGING=true -> staging ACME server + a differently-named
+  # issuer/account key. Production LE caps you at 5 certs for the EXACT same
+  # hostname set per week — trivial to burn through while iterating on a
+  # dogfood/test install (every `helm install` retry after a fix requests a
+  # fresh cert for the same proxy.<domain>/*.proxy.<domain>/snapshots.<domain>
+  # set). Staging certs aren't browser-trusted, so don't use this for
+  # anything you need working TLS in a normal browser for.
+  local issuer_name=letsencrypt-prod
+  local server=https://acme-v02.api.letsencrypt.org/directory
+  if [[ "${STAGING:-false}" == "true" ]]; then
+    issuer_name=letsencrypt-staging
+    server=https://acme-staging-v02.api.letsencrypt.org/directory
+    omc::log WARN "STAGING=true: using LE staging — certs will NOT be browser-trusted"
+  fi
+
   kubectl -n "$ns" create secret generic cloudflare-api-token \
     --from-literal=api-token="$cf_token" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
@@ -459,13 +484,13 @@ omc::cluster_issuer_apply_cf_dns01() {
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: letsencrypt-prod
+  name: ${issuer_name}
 spec:
   acme:
     email: ${email}
-    server: https://acme-v02.api.letsencrypt.org/directory
+    server: ${server}
     privateKeySecretRef:
-      name: letsencrypt-prod-account-key
+      name: ${issuer_name}-account-key
     solvers:
       - dns01:
           cloudflare:
@@ -473,7 +498,7 @@ spec:
               name: cloudflare-api-token
               key: api-token
 EOF
-  omc::log INFO "ClusterIssuer letsencrypt-prod applied (DNS-01 via Cloudflare; email=${email})"
+  omc::log INFO "ClusterIssuer ${issuer_name} applied (DNS-01 via Cloudflare; email=${email})"
 }
 
 # omc::certs_preissue BASE_DOMAIN [ns=daytona] [issuer=letsencrypt-prod]

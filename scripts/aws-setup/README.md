@@ -155,6 +155,15 @@ These surface during a real deployment.
    call the API or visit the dashboard. The [`teardown.sh`](./teardown.sh)
    script in this directory handles deregistration as part of cleanup.
 
+7. **Region registration silently requires a feature flag most orgs don't
+   have.** `POST /api/regions` is gated behind the `organization_infrastructure`
+   feature flag (PostHog-managed, not self-service). If it's disabled, the
+   pre-install hook Job fails with a plain `404 Cannot POST /api/regions` —
+   indistinguishable from a genuine routing/CDN problem, with no hint a
+   feature flag is involved anywhere in the error path. Confirm the flag is
+   enabled for your org (and be aware targeting may be per-user, not just
+   per-org) *before* troubleshooting anything else if registration 404s.
+
 ## Capacity sizing
 
 Sandbox capacity comes from the **sandbox node pool**, not from separate VMs.
@@ -178,6 +187,7 @@ is enough.
 | Thing | Where it comes from |
 |---|---|
 | `DAYTONA_API_KEY` | Organization API key from https://app.daytona.io/dashboard/keys |
+| `organization_infrastructure` feature flag | **Must be enabled for your org before you start.** Not self-service — ask whoever administers PostHog feature flags for Daytona to enable it for your org (and note: targeting may be keyed on your individual user, not just the org — see below). Without it, `POST /api/regions` returns a plain `404 Cannot POST /api/regions` that looks exactly like a routing/infra bug and gives zero indication a feature flag is involved. This cost real debugging time while dogfooding — check this FIRST if region registration 404s. |
 | `BASE_DOMAIN` | A subdomain you own (e.g. `byoc.yourdomain.com`); the chart derives `proxy.<domain>`, `*.proxy.<domain>`, and `snapshots.<domain>` |
 | Let's Encrypt email | Used for the cert-manager ClusterIssuer registration |
 | DNS provider API token | For DNS-01 wildcard issuance (e.g. a Cloudflare "Edit zone DNS" token scoped to your zone) |
