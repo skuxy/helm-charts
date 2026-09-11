@@ -48,6 +48,54 @@ omc::confirm "This will DELETE the EKS cluster + S3 bucket + IAM resources for '
 
 omc::need_cmd aws eksctl kubectl helm jq
 
+# === 0. Deregister runners + region from Daytona Cloud =======================
+# Despite this script's own docs (and the aws-setup README) claiming teardown
+# "also deregisters the region from Daytona Cloud", it never actually did —
+# helm uninstall only removes K8s resources; the region and its runners stay
+# registered in Daytona Cloud forever, orphaned, with their backing infra
+# gone. Must run FIRST, before any K8s/AWS teardown below, since it needs the
+# org API key + region id from secrets that step 1 is about to delete.
+#
+# The API refuses to delete a runner that's still schedulable, and refuses to
+# delete a region that still has any runner attached — same two-step
+# unschedulable-then-draining sequence the runner-reaper CronJob uses
+# (see runner-reaper-cronjob.yaml) is required here too.
+if kubectl get ns daytona >/dev/null 2>&1 && kubectl get secret daytona-region-daytona-api-key -n daytona >/dev/null 2>&1; then
+  omc::log INFO "=== Deregistering region from Daytona Cloud ==="
+  _dtn_key="$(kubectl get secret daytona-region-daytona-api-key -n daytona -o jsonpath='{.data.daytona-api-key}' 2>/dev/null | base64 -d)"
+  _region_id="$(kubectl get secret daytona-region-region-config -n daytona -o jsonpath='{.data.id}' 2>/dev/null | base64 -d)"
+  _api_url="${DAYTONA_API_URL:-https://app.daytona.io/api}"
+  if [[ -n "$_dtn_key" && -n "$_region_id" ]]; then
+    _runner_ids="$(curl -sS -H "Authorization: Bearer ${_dtn_key}" "${_api_url}/runners?regionId=${_region_id}" 2>/dev/null | jq -r '.[].id' 2>/dev/null)"
+    for _rid in $_runner_ids; do
+      curl -sS -o /dev/null -X PATCH -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${_dtn_key}" -d '{"unschedulable":true}' \
+        "${_api_url}/runners/${_rid}/scheduling" 2>/dev/null
+      curl -sS -o /dev/null -X PATCH -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${_dtn_key}" -d '{"draining":true}' \
+        "${_api_url}/runners/${_rid}/draining" 2>/dev/null
+      _code="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+        -H "Authorization: Bearer ${_dtn_key}" "${_api_url}/runners/${_rid}" 2>/dev/null)"
+      if [[ "$_code" == "204" ]]; then
+        omc::log INFO "  deleted runner ${_rid}"
+      else
+        omc::log WARN "  runner ${_rid} delete returned HTTP ${_code} (continuing)"
+      fi
+    done
+    _rcode="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+      -H "Authorization: Bearer ${_dtn_key}" "${_api_url}/regions/${_region_id}" 2>/dev/null)"
+    if [[ "$_rcode" == "204" ]]; then
+      omc::log INFO "region ${_region_id} deregistered from Daytona Cloud"
+    else
+      omc::log WARN "region deregistration returned HTTP ${_rcode} — may need manual cleanup: DELETE ${_api_url}/regions/${_region_id}"
+    fi
+  else
+    omc::log WARN "Could not read API key/region id from secrets — skipping Daytona Cloud deregistration. Manual cleanup may be needed."
+  fi
+else
+  omc::log WARN "daytona namespace or API key secret not found — skipping Daytona Cloud deregistration (already torn down, or install never completed)."
+fi
+
 # === 1. helm uninstall + delete namespace ====================================
 if kubectl get ns daytona >/dev/null 2>&1; then
   helm uninstall daytona-region -n daytona --wait --timeout 5m 2>/dev/null \
