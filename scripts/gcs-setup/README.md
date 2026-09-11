@@ -111,7 +111,7 @@ actions involved.
 | 11 | Install cert-manager + ClusterIssuer for wildcard TLS | ✅ DNS-01 |
 | 12 | Install `daytona-region` chart — registers the region AND brings up proxy + snapshot-manager + runner-manager + **runner DaemonSet** | ✅ `helm install` |
 | 13 | Wait for runner pods to schedule on the sandbox nodes | ✅ `kubectl -n daytona get pods` |
-| 14 | Validate with the SDK / dashboard | ✅ `e2e.sh` runs `daytona.create(target=<region>)` |
+| 14 | Validate with the SDK / dashboard | ✅ `e2e.sh` runs `DaytonaConfig(target=<region>)` + `daytona.create(...)` |
 
 ## Common pitfalls
 
@@ -121,7 +121,7 @@ Each of these is real and surfaces during a BYOC deployment.
    The chart's runner DaemonSet uses `nodeSelector: daytona-sandbox-c=true`
    and tolerates the `sandbox=true:NoSchedule` taint. If your cluster has no
    node carrying that label *and* taint, the runner pods stay `Pending`, the
-   region shows "no available runners", and `daytona.create(target=region)`
+   region shows "no available runners", and `DaytonaConfig(target=region) + daytona.create(...)`
    fails. `up.sh` creates a dedicated `daytona-sandbox` node pool for exactly
    this reason.
 
@@ -172,10 +172,20 @@ Each of these is real and surfaces during a BYOC deployment.
    *new* region rather than update the old one. Clean up stale regions in
    Daytona Cloud before re-running.
 
-8. **`helm uninstall` does NOT clean up Daytona Cloud state.** The region
-   you registered stays in Daytona Cloud's database. You have to call the
-   API or visit the dashboard. The `teardown.sh` script in this repo handles
-   the GCP-side cleanup; the region must still be removed from Daytona Cloud.
+8. **`helm uninstall` alone does NOT clean up Daytona Cloud state.** The
+   region you registered (and its runners) stays in Daytona Cloud's database
+   forever if you only run `helm uninstall` by hand. `teardown.sh` handles
+   this correctly (deregisters the region + runners from Daytona Cloud
+   *before* the GCP-side cleanup) — always use it rather than tearing down
+   manually.
+
+9. **There is no default snapshot in a BYOC region.** Daytona-managed
+   regions have an org-default snapshot (`daytonaio/sandbox:X`) that
+   `daytona.create()` falls back to when you don't specify one; that snapshot
+   is never replicated to custom BYOC regions. Calling `daytona.create()`
+   with no image fails with `Snapshot daytonaio/sandbox:X is not available
+   in region <your-region>`. Always pass an explicit `Image` (e.g.
+   `Image.debian_slim("3.12")` or `Image.base("alpine:3.21")`).
 
 ## Capacity sizing
 
@@ -196,6 +206,7 @@ sandbox-labelled node, and sandbox containers run on those nodes.
 | Thing | Where it comes from |
 |---|---|
 | `DAYTONA_API_KEY` | Generate at https://app.daytona.io/dashboard/keys (the org key) |
+| `organization_infrastructure` feature flag | **Must be enabled for your org before you start.** Not self-service — ask whoever administers PostHog feature flags for Daytona to enable it (targeting may be keyed on your individual user, not just the org). Without it, `POST /api/regions` returns a plain `404 Cannot POST /api/regions` that looks exactly like a routing/infra bug and gives zero indication a feature flag is involved. Check this FIRST if region registration 404s. |
 | Base DNS domain | A domain/subdomain you own (e.g. `byoc.yourdomain.com`); A records point at the cluster LB IP |
 | Let's Encrypt email | Anything — used for ACME registration |
 | DNS-01 provider token | e.g. a Cloudflare "Edit zone DNS" token scoped to your zone, for wildcard TLS |
@@ -226,7 +237,7 @@ runner image is not prompted for; it follows the chart appVersion.
 After it completes:
 
 ```bash
-# Smoke test: daytona.create(target=region) then code_run("print('Hello World')")
+# Smoke test: DaytonaConfig(target=region) + daytona.create(...) then code_run("print('Hello World')")
 bash scripts/gcs-setup/e2e.sh
 
 # When done (GCP-side cleanup; region must still be removed from Daytona Cloud):
@@ -250,7 +261,7 @@ gcs-setup/
 │                                  # BASE_DOMAIN, REGION_NAME, API creds, GCS
 │                                  # bucket + HMAC keys; rendered to
 │                                  # .state/values-region.yaml, 0600).
-├── e2e.sh                         # SDK test: daytona.create(target=region)
+├── e2e.sh                         # SDK test: DaytonaConfig(target=region) + daytona.create(...)
 │                                  # then code_run("print('Hello World')").
 ├── .state/                        # generated at runtime: prompts.env (0600),
 │                                  # hmac.env (0600), rendered values (0600).
@@ -371,12 +382,12 @@ as you experiment.
 cannot be automated and require action in
 [app.daytona.io](https://app.daytona.io):
 
-1. **The region in Daytona Cloud.** `helm uninstall` (and thus `teardown.sh`)
-   does not deregister the region — remove it via the dashboard or the
-   `DELETE /api/regions/<id>` endpoint.
-2. **The user/organization that owns the region.** Removing this is a
-   privileged dashboard action — there's no API.
-3. **Personal API keys.** Rotate or revoke at
+1. **The user/organization that owns the region.** Removing this is a
+   privileged dashboard action — there's no API. (`teardown.sh` DOES
+   deregister the region and its runners from Daytona Cloud itself, via the
+   API, before touching any GCP resources — you don't need to do this by
+   hand unless `teardown.sh` warns that deregistration failed.)
+2. **Personal API keys.** Rotate or revoke at
    https://app.daytona.io/dashboard/keys after each test run if you want
    to be extra safe.
 

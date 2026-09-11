@@ -79,7 +79,7 @@ actions involved.
 | 13 | `helm install daytona-region` (registers region; brings up proxy, snapshot-manager, ssh-gateway, runner-manager, and the runner DaemonSet) | ✅ helm install |
 | 13b | Swap the ssh-gateway onto the region-scoped api key + advertise the gateway LB to Daytona Cloud (org keys 403 on session validation) | ✅ `omc::region_sshgateway_finalize` |
 | 14 | Wait for runner pods to roll out and the runner-manager to report runners "ready" | ✅ Polled via `kubectl` + API |
-| 15 | Validate with the SDK | ✅ `e2e.sh` runs `daytona.create(target=<region>)` |
+| 15 | Validate with the SDK | ✅ `e2e.sh` runs `DaytonaConfig(target=<region>)` + `daytona.create(...)` |
 
 ## Common pitfalls
 
@@ -90,7 +90,7 @@ Each of these can surface during a BYOC deployment.
    `daytona-sandbox-c=true` label and tolerating the `sandbox=true:NoSchedule`
    taint. If no node matches, `helm install` still succeeds and the region
    appears in the dashboard, but the runner pods never start and
-   `daytona.create(target=region)` fails with "no available runners". Label and
+   `DaytonaConfig(target=region) + daytona.create(...)` fails with "no available runners". Label and
    taint a node pool *before* installing.
 
 2. **Two different `dtn_xxx` API keys.** The *organization (org)* key is what the
@@ -139,14 +139,23 @@ Each of these can surface during a BYOC deployment.
 
 8. **You can't validate the region without runners.** Until the runner
    DaemonSet is `Running` and the `runner-manager` reports at least one runner
-   "ready", `daytona.create(target=region)` will fail. "Did my chart install
+   "ready", `DaytonaConfig(target=region) + daytona.create(...)` will fail. "Did my chart install
    work?" can only be answered once the runner pods are healthy.
+
+9. **There is no default snapshot in a BYOC region.** Daytona-managed
+   regions have an org-default snapshot (`daytonaio/sandbox:X`) that
+   `daytona.create()` falls back to when you don't specify one; that snapshot
+   is never replicated to custom BYOC regions. Calling `daytona.create()`
+   with no image fails with `Snapshot daytonaio/sandbox:X is not available
+   in region <your-region>`. Always pass an explicit `Image` (e.g.
+   `Image.debian_slim("3.12")` or `Image.base("alpine:3.21")`).
 
 ## Requirements
 
 | Thing | Where it comes from |
 |---|---|
 | `DAYTONA_API_KEY` | Generate at https://app.daytona.io/dashboard/keys |
+| `organization_infrastructure` feature flag | **Must be enabled for your org before you start.** Not self-service — ask whoever administers PostHog feature flags for Daytona to enable it (targeting may be keyed on your individual user, not just the org). Without it, `POST /api/regions` returns a plain `404 Cannot POST /api/regions` that looks exactly like a routing/infra bug and gives zero indication a feature flag is involved. Check this FIRST if region registration 404s. |
 | `DOMAIN` | A subdomain you own under a Cloudflare-managed zone (e.g. `byoc.yourdomain.com`) |
 | `ACME_EMAIL` | Anything — used for Let's Encrypt registration |
 | `CLOUDFLARE_API_TOKEN` | https://dash.cloudflare.com/profile/api-tokens — "Edit zone DNS" template, scoped to your zone |
@@ -196,7 +205,7 @@ azure-setup/
 │                                  # chart to BYOC, reusing its wildcard TLS
 │                                  # cert (auto-detects domain from the OSS
 │                                  # release; dry-runs unless CONFIRM=yes).
-├── e2e.sh                         # SDK test: daytona.create(target=region)
+├── e2e.sh                         # SDK test: DaytonaConfig(target=region) + daytona.create(...)
 │                                  # then code_run("print('Hello World')")
 ├── test/                          # older phase-by-phase setup (see its
 │                                  # own README) for iterating on individual
@@ -272,7 +281,7 @@ You will have:
 1. A working BYOC region on AKS with the runner DaemonSet serving sandboxes
    in-cluster
 2. Working SDK calls targeting your custom region
-3. Direct experience with all 8 pitfalls listed above
+3. Direct experience with all 9 pitfalls listed above
 
 You can then either tear down (cheapest), keep it running to demo someone
 else (~$0.50/hr for the AKS cluster), or re-run `helm upgrade` as you

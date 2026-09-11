@@ -57,7 +57,7 @@ services:
       wildcardTls: ${PROXY_WILDCARD_TLS}
       selfSigned: false
       annotations:
-        cert-manager.io/cluster-issuer: "letsencrypt-prod"
+        cert-manager.io/cluster-issuer: "${CLUSTER_ISSUER_NAME}"
         nginx.ingress.kubernetes.io/ssl-redirect: "true"
         nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
         nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
@@ -86,7 +86,7 @@ services:
       hostname: "snapshots.${BASE_DOMAIN}"
       tls: true
       annotations:
-        cert-manager.io/cluster-issuer: "letsencrypt-prod"
+        cert-manager.io/cluster-issuer: "${CLUSTER_ISSUER_NAME}"
         nginx.ingress.kubernetes.io/ssl-redirect: "true"
         # Docker registry layer pushes are hundreds of MB to GB.
         nginx.ingress.kubernetes.io/proxy-body-size: "0"

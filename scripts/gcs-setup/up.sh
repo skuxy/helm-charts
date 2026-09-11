@@ -196,7 +196,13 @@ else
   omc::cluster_issuer_apply "$CLUSTER_ISSUER_EMAIL"
   PROXY_WILDCARD_TLS=false
 fi
-export PROXY_WILDCARD_TLS
+# Must match the issuer name the functions above actually created — see the
+# STAGING note in scripts/_lib/common.sh. Set STAGING=true before running
+# up.sh to avoid burning production Let's Encrypt's 5-certs-per-exact-
+# hostname-set-per-week limit while iterating on a test/dogfood install.
+CLUSTER_ISSUER_NAME=letsencrypt-prod
+[[ "${STAGING:-false}" == "true" ]] && CLUSTER_ISSUER_NAME=letsencrypt-staging
+export PROXY_WILDCARD_TLS CLUSTER_ISSUER_NAME
 
 # === 8. Wait for LoadBalancer + DNS records ==================================
 omc::log INFO "=== Step 8/10: Wait for LoadBalancer + DNS ==="

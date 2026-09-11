@@ -98,8 +98,7 @@ iptables -L SBX_INPUT -n -v
 
 ## Sandbox Sizing And Density
 
-Two knobs control per-node density: a node-level CPU reconciler and the runner
-availability ceiling used by Daytona scheduling.
+Only one knob here is an actual chart value: a node-level CPU reconciler.
 
 ```yaml
 services:
@@ -108,10 +107,6 @@ services:
       enabled: true
       limitMillicoresPerVcpu: 250
       requestMillicoresPerVcpu: 0
-  api:
-    sandboxDensity:
-      maxSandboxesPerNode: "100"
-      # availabilityScoreThreshold: "15"
 ```
 
 The CPU reconciler rewrites each new sandbox container's cgroup CPU quota on
@@ -119,9 +114,14 @@ the runner node. It preserves relative sizing, leaves unlimited containers
 alone, and does not change Daytona Cloud quota accounting. Memory is not scaled:
 size memory conservatively because overcommit leads to OOM kills.
 
-The density ceiling maps to Daytona's runner availability scoring. It is a
-soft ceiling: runners stop receiving new sandboxes as score drops, but very
-large concurrent bursts can briefly overshoot. Pair density limits with enough
+Per-node density beyond that is NOT controlled by any chart value —
+`services.api.sandboxDensity` does not exist anywhere in this chart despite
+earlier versions of this doc implying otherwise. Density is instead governed
+entirely on the Daytona Cloud side, via each runner's server-computed
+`availabilityScore` (`GET /runners` — see [`aws-setup/README.md`'s "Validating
+each stage"](../scripts/aws-setup/README.md) for a live query). Runners stop
+receiving new sandboxes as their score drops; there is no client-side ceiling
+to set. Pair chart-side resource sizing with enough
 sandbox nodes and runner-manager capacity.
 
 Reference sizes for 1-vCPU / 1-GiB sandboxes with `limitMillicoresPerVcpu: 250`:
@@ -187,10 +187,12 @@ RUN apk add --no-cache rclone fuse3 \
  && echo user_allow_other >> /etc/fuse.conf
 ```
 
-Validate an image before changing a release:
+Validate an image before changing a release — confirm the backend's binary
+is actually present (no dedicated preflight script exists in this repo;
+this is the direct equivalent):
 
 ```bash
-scripts/preflight/check-volume-backend.sh rclone myregistry/daytona-runner:v0.184.0-volumes
+docker run --rm --entrypoint sh myregistry/daytona-runner:v0.184.0-volumes -c 'command -v rclone'
 ```
 
 Known limitations are summarized in [issues-summary.md](issues-summary.md):

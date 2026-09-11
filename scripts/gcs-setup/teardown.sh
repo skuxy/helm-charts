@@ -54,6 +54,11 @@ omc::need_cmd gcloud kubectl helm jq
 
 gcloud config set project "$GCP_PROJECT" >/dev/null 2>&1 || true
 
+# === 0. Deregister runners + region from Daytona Cloud =======================
+# See omc::daytona_deregister_region in ../_lib/common.sh for why this exists
+# and why it must run first, before any K8s/GCP teardown below.
+omc::daytona_deregister_region
+
 # === 1. helm uninstall + release load balancers + delete namespace ==========
 if kubectl get ns daytona >/dev/null 2>&1; then
   helm uninstall daytona-region -n daytona --wait --timeout 5m 2>/dev/null \

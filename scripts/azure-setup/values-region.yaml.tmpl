@@ -57,7 +57,7 @@ services:
       wildcardTls: ${PROXY_WILDCARD_TLS}
       selfSigned: false
       annotations:
-        cert-manager.io/cluster-issuer: "letsencrypt-prod"
+        cert-manager.io/cluster-issuer: "${CLUSTER_ISSUER_NAME}"
         nginx.ingress.kubernetes.io/ssl-redirect: "true"
         # Sandboxes hold long-running websocket and interactive sessions.
         nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
@@ -87,7 +87,7 @@ services:
       hostname: "snapshots.${BASE_DOMAIN}"
       tls: true
       annotations:
-        cert-manager.io/cluster-issuer: "letsencrypt-prod"
+        cert-manager.io/cluster-issuer: "${CLUSTER_ISSUER_NAME}"
         nginx.ingress.kubernetes.io/ssl-redirect: "true"
         # Docker layer pushes exceed nginx's 1m default body limit (413).
         nginx.ingress.kubernetes.io/proxy-body-size: "0"
