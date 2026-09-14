@@ -106,17 +106,50 @@ if [[ -z "${AWS_NODE_VM_SIZE:-}" ]]; then
 fi
 omc::log INFO "Using AWS instance type: $AWS_NODE_VM_SIZE"
 
-# Nested virtualization (needed for CLH/QEMU /dev/kvm access) is only
-# available on specific Intel families — no Graviton, no AMD. Same allowlist
-# already validated for the per-developer dev VMs in infrastructure-aws's
-# daytona-playground Terraform root (terraform/daytona-works/playground/dev-vms.tf).
+# Nested virtualization (needed for CLH/QEMU /dev/kvm access) requires both
+# (a) an instance family AWS actually supports the EC2 launch-time
+# NestedVirtualization CPU option on, and (b) that option explicitly set at
+# launch (`aws ec2 create-launch-template help` / `run-instances help`:
+# "supported only on 8th generation Intel-based instance types (c8i, m8i,
+# r8i, and their flex variants)"). infrastructure-aws's dev-vms.tf
+# (terraform/daytona-works/playground) allows a broader 7th-gen list too,
+# but that's unverified against this same AWS API text — narrower list here
+# on purpose; don't widen it back without confirming 7i via a real dry-run.
 if [[ "${ENABLE_VM_NODE_POOL:-false}" == "true" && -z "${AWS_VM_NODE_VM_SIZE:-}" ]]; then
   _saved_omc_aws_families="$OMC_AWS_FAMILIES"
-  OMC_AWS_FAMILIES="c7i c7i-flex m7i m7i-flex r7i i7i c8i c8i-flex c8id m8i m8i-flex m8id r8i r8i-flex r8id x8i"
+  OMC_AWS_FAMILIES="c8i c8i-flex m8i m8i-flex r8i r8i-flex"
   AWS_VM_NODE_VM_SIZE="$(omc::aws_select_instance_type "$AWS_REGION" 4 OMC_VM_INSTANCE_TYPE)"
   OMC_AWS_FAMILIES="$_saved_omc_aws_families"
   printf 'export AWS_VM_NODE_VM_SIZE=%q\n' "$AWS_VM_NODE_VM_SIZE" >> "$PROMPTS_FILE"
   omc::log INFO "Using AWS instance type for the VM node pool: $AWS_VM_NODE_VM_SIZE"
+fi
+
+# eksctl's managed-nodegroup schema has no field for the EC2 CpuOptions
+# NestedVirtualization launch parameter (confirmed live 2026-09-14: a node
+# group on a capable family, m7i, came up with /dev/kvm absent because
+# nothing ever set this at launch — being on a capable family is necessary
+# but not sufficient). eksctl DOES support attaching a pre-existing launch
+# template to a managed nodegroup (`launchTemplate.id`), merging it with the
+# nodegroup-level instanceType/amiFamily/labels/taints/volumeSize into a new
+# LT version, so only CpuOptions needs to live in our template — everything
+# else stays eksctl-managed. Idempotent/reusable by name across re-runs, same
+# style as the S3 bucket check below.
+VM_NODE_LAUNCH_TEMPLATE_ID=""
+if [[ "${ENABLE_VM_NODE_POOL:-false}" == "true" ]]; then
+  VM_LT_NAME="${CLUSTER_NAME}-sandbox-windows"
+  if VM_NODE_LAUNCH_TEMPLATE_ID="$(aws ec2 describe-launch-templates \
+      --launch-template-names "$VM_LT_NAME" --region "$AWS_REGION" \
+      --query 'LaunchTemplates[0].LaunchTemplateId' --output text 2>/dev/null)" \
+      && [[ -n "$VM_NODE_LAUNCH_TEMPLATE_ID" && "$VM_NODE_LAUNCH_TEMPLATE_ID" != "None" ]]; then
+    omc::log INFO "Reusing nested-virt launch template: $VM_NODE_LAUNCH_TEMPLATE_ID"
+  else
+    VM_NODE_LAUNCH_TEMPLATE_ID="$(aws ec2 create-launch-template \
+      --launch-template-name "$VM_LT_NAME" \
+      --launch-template-data '{"CpuOptions":{"NestedVirtualization":"enabled"}}' \
+      --region "$AWS_REGION" \
+      --query 'LaunchTemplate.LaunchTemplateId' --output text)"
+    omc::log INFO "Created nested-virt launch template: $VM_NODE_LAUNCH_TEMPLATE_ID"
+  fi
 fi
 
 # === 2. EKS cluster ==========================================================
@@ -146,6 +179,8 @@ else
     maxSize: 2
     instanceType: ${AWS_VM_NODE_VM_SIZE}
     amiFamily: Ubuntu2404
+    launchTemplate:
+      id: ${VM_NODE_LAUNCH_TEMPLATE_ID}
     labels:
       daytona-sandbox-windows: "true"
     taints:

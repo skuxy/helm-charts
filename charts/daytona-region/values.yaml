@@ -764,7 +764,15 @@ services:
   runnerVm:
     enabled: false
     image:
-      registry: docker.io
+      # No default (unlike services.runner's docker.io + short repo path):
+      # runnerVm has no public image yet, and confirmed live 2026-09-14 that
+      # a "docker.io" default silently produces a broken
+      # "docker.io/<your-registry-host>/<path>" reference for anyone pointing
+      # repository at a fully-qualified private registry (e.g. ECR) without
+      # separately overriding registry -- ImagePullBackOff / insufficient_scope,
+      # no hint the real cause is a values mismatch. Required, same as
+      # repository/tag below, so a missing override fails loud at template time.
+      registry: ""
       # No published image name confirmed at authoring time -- runner-vm's repo
       # has no top-level release Dockerfile checked in. Set explicitly; the
       # chart intentionally does NOT guess a default here.
@@ -833,9 +841,21 @@ services:
         memory: 4Gi
     # Nodes must expose /dev/kvm -- standard (non-metal) cloud instances do
     # NOT (verified 2026-09-14 against a live EKS m8a.2xlarge node: no
-    # /dev/kvm, no vmx/svm CPU flags at all). Bare-metal instances only.
-    nodeSelector:
-      daytona-sandbox-vm: "true"
+    # /dev/kvm, no vmx/svm CPU flags at all) unless nested virtualization was
+    # explicitly enabled at instance launch (see up.sh's ENABLE_VM_NODE_POOL)
+    # or the node is bare metal.
+    #
+    # Empty by default (matches nodeSelector: {} elsewhere in this file) --
+    # deliberately NOT a hardcoded default key. A prior default here
+    # (daytona-sandbox-vm: "true") required every real deployment whose node
+    # label differs (e.g. the Windows dogfood path's daytona-sandbox-windows)
+    # to null it back out via a separate override file, and confirmed live
+    # 2026-09-14 that `helm upgrade --reuse-values` does not reliably
+    # re-apply a previously-set explicit `null` across releases -- silently
+    # reverting the DaemonSet to require BOTH labels, matching no node, with
+    # zero error (DESIRED=N/READY=0). Set the label(s) your node pool
+    # actually carries here explicitly; there is nothing to null out.
+    nodeSelector: {}
     tolerations:
       - key: "sandbox"
         operator: "Equal"
