@@ -1,0 +1,31 @@
+charts/daytona-region/templates/runner-vm-configmap.yaml
+  s_05ee375f1e3d59::t_faca92fa32c495 1-28,34,36-53
+  s_05ee375f1e3d59::t_4cbdc4c3ec681d 29-33,35
+charts/daytona-region/templates/_helpers.tpl
+  s_05ee375f1e3d59::t_2d15df1535d509 69-70
+charts/daytona-region/values.yaml
+  s_05ee375f1e3d59::t_da0ecde3ebe793 753-853
+charts/daytona-region/templates/runner-vm-secret.yaml
+  s_05ee375f1e3d59::t_9695bb1cf4cac0 25-28
+  s_05ee375f1e3d59::t_1dca671e25afcd 1-24,29-35
+charts/daytona-region/templates/runner-vm-serviceaccount.yaml
+  s_05ee375f1e3d59::t_feb8f8029f9ece 1-14
+charts/daytona-region/templates/runner-vm-daemonset.yaml
+  s_05ee375f1e3d59::t_221fd0f33d088e 1-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ef46f909ecc040cb547ea3ea326199c4cb95e5ba",
+  "prompts": {},
+  "sessions": {
+    "s_05ee375f1e3d59": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "188e3684-b6fd-4924-8daf-8c0a1c660225",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Borna Skukan <bskukan@daytona.io>"
+    }
+  }
+}
