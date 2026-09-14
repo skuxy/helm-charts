@@ -66,6 +66,8 @@ Create the name of the service account to use
   {{- $normalizedService = "ssh-gateway" -}}
 {{- else if eq $service "snapshotManager" -}}
   {{- $normalizedService = "snapshot-manager" -}}
+{{- else if eq $service "runnerVm" -}}
+  {{- $normalizedService = "runner-vm" -}}
 {{- end -}}
 {{- default (printf "%s-%s" (include "daytona.fullname" .) $normalizedService) $serviceConfig.serviceAccount.name }}
 {{- else }}
