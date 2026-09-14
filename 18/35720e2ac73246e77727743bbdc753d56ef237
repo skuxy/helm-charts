@@ -1,0 +1,19 @@
+docs/issues-summary.md
+  s_05ee375f1e3d59::t_312cda886f517f 35-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "1835720e2ac73246e77727743bbdc753d56ef237",
+  "prompts": {},
+  "sessions": {
+    "s_05ee375f1e3d59": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "188e3684-b6fd-4924-8daf-8c0a1c660225",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Borna Skukan <bskukan@daytona.io>"
+    }
+  }
+}
