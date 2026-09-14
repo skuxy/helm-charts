@@ -18,3 +18,18 @@ Sandbox containers are attached to host Docker bridges and can otherwise reach p
 ## Snapshot Scheduling Affinity
 
 Snapshot placement currently uses a hard warm-runner filter, so if only one runner has a snapshot ready, same-snapshot sandbox creates can all land on that runner while other healthy runners sit idle. A better upstream model would keep warm runners preferred but not exclusive, or expose explicit prewarm controls so operators can warm more runners without relying on database-side workarounds.
+
+## Runner-Manager Cannot Spawn VM-Backed (Windows / linux-vm) Runners
+
+`services.runnermanager`'s spawned pods -- which per `docs/troubleshooting.md` are the only runners actually registered with Daytona Cloud in a normal (non-`mainContainer`) install -- cannot serve a VM-backed sandbox class today, confirmed 2026-09-14 by disassembling the published `daytonaio/daytona-runner-manager:v0.207.0` image (its source repo could not be located under either the `daytona` or `daytonaio` GitHub orgs, including archived repos, nor found by its own Go module path `github.com/daytonaio/runner-manager` -- whoever owns it needs to be found before any of this can actually be implemented). Three gaps, all in `pkg/provider/k8s/managed_runner.go`:
+
+1. **No privileged/device support.** `(*K8sProvider).createRunnerPod` never references `SecurityContext`, `Privileged`, `HostPath`, or `/dev/kvm` -- the only structured pod data it builds are two label maps (`component`, `app`, `daytona.io/runner`, `daytona.io/managed-runner`, `daytona.io/runner-id`). A VM runner (CLH/QEMU, see `runner-vm`) needs `/dev/kvm` device access and cannot run under the default unprivileged security context.
+2. **No node targeting.** Same function, same result: zero references to `NodeSelector`, `Toleration`, or `Affinity`. A config field for pod anti-affinity (`RUNNER_POD_ANTI_AFFINITY_TOPOLOGY_KEY`, `envconfig`-tagged) exists but is not read anywhere in `createRunnerPod` -- dead config as far as pod placement goes. There is no way to steer spawned pods onto a bare-metal, KVM-capable node pool.
+3. **Registration never sets `sandboxClass`.** `(*K8sProvider).registerRunner` builds a `CreateRunner` request (the vendored `daytonaio/daytona` `api-client-go` DTO, `model_create_runner.go`) with exactly two fields populated -- `name` and `regionId` -- then calls `RunnersAPIService.CreateRunner`. This is the pre-`sandboxClass` request shape; every runner-manager-spawned pod registers as the default (`container`) class regardless of what image it actually runs, independent of gaps 1 and 2.
+
+Expected upstream direction: three additive, backward-compatible changes to `runner-manager`, matching its existing `RUNNER_POD_*` env var convention --
+- an opt-in `RUNNER_POD_PRIVILEGED` (or equivalent security-context/device-mount config) so spawned pods can request `/dev/kvm`,
+- `RUNNER_POD_NODE_SELECTOR` / `RUNNER_POD_TOLERATIONS` passthrough (JSON or `key=value` list, consistent with how other `RUNNER_POD_*` values are already sourced from env),
+- a `RUNNER_SANDBOX_CLASS` env var threaded into the `CreateRunner` request body (the API already accepts `sandboxClass` as of daytona-ai#[Gap A, 2026-09-14] -- runner-manager was built against the prior two-field shape and has not been updated since).
+
+None of this is implementable from this repo -- it requires `runner-manager`'s own source. `daytona-region`'s `runner-vm-*` chart templates (Track 2, a standalone DaemonSet independent of `runnermanager`) exist as a workaround until this lands, not a replacement for it.
