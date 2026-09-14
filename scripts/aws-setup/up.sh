@@ -109,15 +109,20 @@ omc::log INFO "Using AWS instance type: $AWS_NODE_VM_SIZE"
 # Nested virtualization (needed for CLH/QEMU /dev/kvm access) requires both
 # (a) an instance family AWS actually supports the EC2 launch-time
 # NestedVirtualization CPU option on, and (b) that option explicitly set at
-# launch (`aws ec2 create-launch-template help` / `run-instances help`:
-# "supported only on 8th generation Intel-based instance types (c8i, m8i,
-# r8i, and their flex variants)"). infrastructure-aws's dev-vms.tf
-# (terraform/daytona-works/playground) allows a broader 7th-gen list too,
-# but that's unverified against this same AWS API text — narrower list here
-# on purpose; don't widen it back without confirming 7i via a real dry-run.
+# launch. `aws ec2 create-launch-template help` / `run-instances help` claim
+# this is "supported only on 8th generation Intel-based instance types" --
+# that text is stale/incomplete. The authoritative source is
+# `aws ec2 describe-instance-types --query
+# 'InstanceTypes[].ProcessorInfo.SupportedFeatures'`, which lists
+# "nested-virtualization" for the full 7th+8th-gen Intel set below (verified
+# live 2026-09-14 in us-west-2) and returns null for non-Intel/older families
+# (checked m6i, m7a as a negative control). Same list as
+# infrastructure-aws's dev-vms.tf (terraform/daytona-works/playground) --
+# that precedent was correct; don't re-narrow this without re-verifying via
+# describe-instance-types, not the CLI help text.
 if [[ "${ENABLE_VM_NODE_POOL:-false}" == "true" && -z "${AWS_VM_NODE_VM_SIZE:-}" ]]; then
   _saved_omc_aws_families="$OMC_AWS_FAMILIES"
-  OMC_AWS_FAMILIES="c8i c8i-flex m8i m8i-flex r8i r8i-flex"
+  OMC_AWS_FAMILIES="c7i c7i-flex m7i m7i-flex r7i i7i c8i c8i-flex c8id m8i m8i-flex m8id r8i r8i-flex r8id x8i"
   AWS_VM_NODE_VM_SIZE="$(omc::aws_select_instance_type "$AWS_REGION" 4 OMC_VM_INSTANCE_TYPE)"
   OMC_AWS_FAMILIES="$_saved_omc_aws_families"
   printf 'export AWS_VM_NODE_VM_SIZE=%q\n' "$AWS_VM_NODE_VM_SIZE" >> "$PROMPTS_FILE"
