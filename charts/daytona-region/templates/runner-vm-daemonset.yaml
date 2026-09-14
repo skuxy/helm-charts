@@ -68,7 +68,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: runner-vm
-          image: "{{ include "daytona.imageRegistry" (dict "Values" .Values "serviceRegistry" .Values.services.runnerVm.image.registry) }}/{{ required "services.runnerVm.image.repository is required (no default -- see values.yaml comment)" .Values.services.runnerVm.image.repository }}:{{ required "services.runnerVm.image.tag is required" .Values.services.runnerVm.image.tag }}"
+          image: "{{ required "services.runnerVm.image.registry is required (no default -- see values.yaml comment; a docker.io default silently breaks fully-qualified private-registry repository values)" (include "daytona.imageRegistry" (dict "Values" .Values "serviceRegistry" .Values.services.runnerVm.image.registry)) }}/{{ required "services.runnerVm.image.repository is required (no default -- see values.yaml comment)" .Values.services.runnerVm.image.repository }}:{{ required "services.runnerVm.image.tag is required" .Values.services.runnerVm.image.tag }}"
           imagePullPolicy: {{ .Values.services.runnerVm.image.pullPolicy }}
           securityContext:
             privileged: true
