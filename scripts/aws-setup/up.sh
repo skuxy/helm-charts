@@ -73,6 +73,16 @@ if [[ "$RUNNER_AWS_CREDENTIAL_MODE" != "static" && "$RUNNER_AWS_CREDENTIAL_MODE"
   omc::die "RUNNER_AWS_CREDENTIAL_MODE must be 'static' or 'irsa' (got: $RUNNER_AWS_CREDENTIAL_MODE)"
 fi
 
+# TODO(BYOC-WINDOWS): this ONLY provisions a second, nested-virt-capable node
+# pool (labelled daytona-sandbox-windows=true). It does NOT install a working
+# linux-vm/windows runner on it — the daytona-region chart's `runner`
+# container is daytonaio/daytona-runner, a different binary from runner-vm/
+# ignium (see values.yaml's sandboxClass TODO), and that design question is
+# still open. This exists so the node pool + KVM access + chart knobs
+# (services.runner.sandboxClass/nodePool/kvmDevice) can be exercised and
+# dogfooded ahead of that being resolved.
+omc::prompt ENABLE_VM_NODE_POOL "Also provision a nested-virt-capable node pool for linux-vm/windows sandboxes (true/false)" "false"
+
 # Persist prompts so re-runs reuse them.
 {
   printf 'export CLUSTER_NAME=%q\n' "$CLUSTER_NAME"
@@ -83,6 +93,7 @@ fi
   printf 'export AWS_REGION=%q\n'   "$AWS_REGION"
   printf 'export S3_BUCKET=%q\n'    "$S3_BUCKET"
   printf 'export RUNNER_AWS_CREDENTIAL_MODE=%q\n' "$RUNNER_AWS_CREDENTIAL_MODE"
+  printf 'export ENABLE_VM_NODE_POOL=%q\n' "$ENABLE_VM_NODE_POOL"
 } > "$PROMPTS_FILE"
 chmod 600 "$PROMPTS_FILE"
 omc::log INFO "Prompts saved: $PROMPTS_FILE"
@@ -94,6 +105,19 @@ if [[ -z "${AWS_NODE_VM_SIZE:-}" ]]; then
   printf 'export AWS_NODE_VM_SIZE=%q\n' "$AWS_NODE_VM_SIZE" >> "$PROMPTS_FILE"
 fi
 omc::log INFO "Using AWS instance type: $AWS_NODE_VM_SIZE"
+
+# Nested virtualization (needed for CLH/QEMU /dev/kvm access) is only
+# available on specific Intel families — no Graviton, no AMD. Same allowlist
+# already validated for the per-developer dev VMs in infrastructure-aws's
+# daytona-playground Terraform root (terraform/daytona-works/playground/dev-vms.tf).
+if [[ "${ENABLE_VM_NODE_POOL:-false}" == "true" && -z "${AWS_VM_NODE_VM_SIZE:-}" ]]; then
+  _saved_omc_aws_families="$OMC_AWS_FAMILIES"
+  OMC_AWS_FAMILIES="c7i c7i-flex m7i m7i-flex r7i i7i c8i c8i-flex c8id m8i m8i-flex m8id r8i r8i-flex r8id x8i"
+  AWS_VM_NODE_VM_SIZE="$(omc::aws_select_instance_type "$AWS_REGION" 4 OMC_VM_INSTANCE_TYPE)"
+  OMC_AWS_FAMILIES="$_saved_omc_aws_families"
+  printf 'export AWS_VM_NODE_VM_SIZE=%q\n' "$AWS_VM_NODE_VM_SIZE" >> "$PROMPTS_FILE"
+  omc::log INFO "Using AWS instance type for the VM node pool: $AWS_VM_NODE_VM_SIZE"
+fi
 
 # === 2. EKS cluster ==========================================================
 omc::log INFO "=== Step 2/9: EKS cluster ==="
@@ -110,6 +134,28 @@ omc::log INFO "EKS version (Ubuntu 24.04 AMI available in $AWS_REGION): $EKS_VER
 if eksctl get cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
   omc::log INFO "EKS cluster $CLUSTER_NAME already exists in $AWS_REGION"
 else
+  VM_NODE_GROUP_YAML=""
+  if [[ "${ENABLE_VM_NODE_POOL:-false}" == "true" ]]; then
+    VM_NODE_GROUP_YAML=$(cat <<VMEOF
+  - name: sandbox-windows
+    # Smaller/cheaper than the container pool's HA sizing (min 2) — this is
+    # for dogfooding the node pool + KVM access, not production capacity.
+    # Raise minSize/maxSize once linux-vm/windows is a real supported path.
+    desiredCapacity: 1
+    minSize: 1
+    maxSize: 2
+    instanceType: ${AWS_VM_NODE_VM_SIZE}
+    amiFamily: Ubuntu2404
+    labels:
+      daytona-sandbox-windows: "true"
+    taints:
+      - key: sandbox-windows
+        value: "true"
+        effect: NoSchedule
+    volumeSize: 100
+VMEOF
+)
+  fi
   cat > "$CLUSTER_CONFIG" <<EOF
 apiVersion: eksctl.io/v1alpha5
 kind: ClusterConfig
@@ -140,6 +186,7 @@ managedNodeGroups:
         value: "true"
         effect: NoSchedule
     volumeSize: 100
+${VM_NODE_GROUP_YAML}
 EOF
   omc::log INFO "Creating EKS cluster (this takes 15-20 min)..."
   eksctl create cluster -f "$CLUSTER_CONFIG"
