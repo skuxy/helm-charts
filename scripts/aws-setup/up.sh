@@ -73,6 +73,16 @@ if [[ "$RUNNER_AWS_CREDENTIAL_MODE" != "static" && "$RUNNER_AWS_CREDENTIAL_MODE"
   omc::die "RUNNER_AWS_CREDENTIAL_MODE must be 'static' or 'irsa' (got: $RUNNER_AWS_CREDENTIAL_MODE)"
 fi
 
+# TODO(BYOC-WINDOWS): this ONLY provisions a second, nested-virt-capable node
+# pool (labelled daytona-sandbox-windows=true). It does NOT install a working
+# linux-vm/windows runner on it — the daytona-region chart's `runner`
+# container is daytonaio/daytona-runner, a different binary from runner-vm/
+# ignium (see values.yaml's sandboxClass TODO), and that design question is
+# still open. This exists so the node pool + KVM access + chart knobs
+# (services.runner.sandboxClass/nodePool/kvmDevice) can be exercised and
+# dogfooded ahead of that being resolved.
+omc::prompt ENABLE_VM_NODE_POOL "Also provision a nested-virt-capable node pool for linux-vm/windows sandboxes (true/false)" "false"
+
 # Persist prompts so re-runs reuse them.
 {
   printf 'export CLUSTER_NAME=%q\n' "$CLUSTER_NAME"
@@ -83,6 +93,7 @@ fi
   printf 'export AWS_REGION=%q\n'   "$AWS_REGION"
   printf 'export S3_BUCKET=%q\n'    "$S3_BUCKET"
   printf 'export RUNNER_AWS_CREDENTIAL_MODE=%q\n' "$RUNNER_AWS_CREDENTIAL_MODE"
+  printf 'export ENABLE_VM_NODE_POOL=%q\n' "$ENABLE_VM_NODE_POOL"
 } > "$PROMPTS_FILE"
 chmod 600 "$PROMPTS_FILE"
 omc::log INFO "Prompts saved: $PROMPTS_FILE"
@@ -94,6 +105,57 @@ if [[ -z "${AWS_NODE_VM_SIZE:-}" ]]; then
   printf 'export AWS_NODE_VM_SIZE=%q\n' "$AWS_NODE_VM_SIZE" >> "$PROMPTS_FILE"
 fi
 omc::log INFO "Using AWS instance type: $AWS_NODE_VM_SIZE"
+
+# Nested virtualization (needed for CLH/QEMU /dev/kvm access) requires both
+# (a) an instance family AWS actually supports the EC2 launch-time
+# NestedVirtualization CPU option on, and (b) that option explicitly set at
+# launch. `aws ec2 create-launch-template help` / `run-instances help` claim
+# this is "supported only on 8th generation Intel-based instance types" --
+# that text is stale/incomplete. The authoritative source is
+# `aws ec2 describe-instance-types --query
+# 'InstanceTypes[].ProcessorInfo.SupportedFeatures'`, which lists
+# "nested-virtualization" for the full 7th+8th-gen Intel set below (verified
+# live 2026-09-14 in us-west-2) and returns null for non-Intel/older families
+# (checked m6i, m7a as a negative control). Same list as
+# infrastructure-aws's dev-vms.tf (terraform/daytona-works/playground) --
+# that precedent was correct; don't re-narrow this without re-verifying via
+# describe-instance-types, not the CLI help text.
+if [[ "${ENABLE_VM_NODE_POOL:-false}" == "true" && -z "${AWS_VM_NODE_VM_SIZE:-}" ]]; then
+  _saved_omc_aws_families="$OMC_AWS_FAMILIES"
+  OMC_AWS_FAMILIES="c7i c7i-flex m7i m7i-flex r7i i7i c8i c8i-flex c8id m8i m8i-flex m8id r8i r8i-flex r8id x8i"
+  AWS_VM_NODE_VM_SIZE="$(omc::aws_select_instance_type "$AWS_REGION" 4 OMC_VM_INSTANCE_TYPE)"
+  OMC_AWS_FAMILIES="$_saved_omc_aws_families"
+  printf 'export AWS_VM_NODE_VM_SIZE=%q\n' "$AWS_VM_NODE_VM_SIZE" >> "$PROMPTS_FILE"
+  omc::log INFO "Using AWS instance type for the VM node pool: $AWS_VM_NODE_VM_SIZE"
+fi
+
+# eksctl's managed-nodegroup schema has no field for the EC2 CpuOptions
+# NestedVirtualization launch parameter (confirmed live 2026-09-14: a node
+# group on a capable family, m7i, came up with /dev/kvm absent because
+# nothing ever set this at launch — being on a capable family is necessary
+# but not sufficient). eksctl DOES support attaching a pre-existing launch
+# template to a managed nodegroup (`launchTemplate.id`), merging it with the
+# nodegroup-level instanceType/amiFamily/labels/taints/volumeSize into a new
+# LT version, so only CpuOptions needs to live in our template — everything
+# else stays eksctl-managed. Idempotent/reusable by name across re-runs, same
+# style as the S3 bucket check below.
+VM_NODE_LAUNCH_TEMPLATE_ID=""
+if [[ "${ENABLE_VM_NODE_POOL:-false}" == "true" ]]; then
+  VM_LT_NAME="${CLUSTER_NAME}-sandbox-windows"
+  if VM_NODE_LAUNCH_TEMPLATE_ID="$(aws ec2 describe-launch-templates \
+      --launch-template-names "$VM_LT_NAME" --region "$AWS_REGION" \
+      --query 'LaunchTemplates[0].LaunchTemplateId' --output text 2>/dev/null)" \
+      && [[ -n "$VM_NODE_LAUNCH_TEMPLATE_ID" && "$VM_NODE_LAUNCH_TEMPLATE_ID" != "None" ]]; then
+    omc::log INFO "Reusing nested-virt launch template: $VM_NODE_LAUNCH_TEMPLATE_ID"
+  else
+    VM_NODE_LAUNCH_TEMPLATE_ID="$(aws ec2 create-launch-template \
+      --launch-template-name "$VM_LT_NAME" \
+      --launch-template-data '{"CpuOptions":{"NestedVirtualization":"enabled"}}' \
+      --region "$AWS_REGION" \
+      --query 'LaunchTemplate.LaunchTemplateId' --output text)"
+    omc::log INFO "Created nested-virt launch template: $VM_NODE_LAUNCH_TEMPLATE_ID"
+  fi
+fi
 
 # === 2. EKS cluster ==========================================================
 omc::log INFO "=== Step 2/9: EKS cluster ==="
@@ -110,6 +172,30 @@ omc::log INFO "EKS version (Ubuntu 24.04 AMI available in $AWS_REGION): $EKS_VER
 if eksctl get cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
   omc::log INFO "EKS cluster $CLUSTER_NAME already exists in $AWS_REGION"
 else
+  VM_NODE_GROUP_YAML=""
+  if [[ "${ENABLE_VM_NODE_POOL:-false}" == "true" ]]; then
+    VM_NODE_GROUP_YAML=$(cat <<VMEOF
+  - name: sandbox-windows
+    # Smaller/cheaper than the container pool's HA sizing (min 2) — this is
+    # for dogfooding the node pool + KVM access, not production capacity.
+    # Raise minSize/maxSize once linux-vm/windows is a real supported path.
+    desiredCapacity: 1
+    minSize: 1
+    maxSize: 2
+    instanceType: ${AWS_VM_NODE_VM_SIZE}
+    amiFamily: Ubuntu2404
+    launchTemplate:
+      id: ${VM_NODE_LAUNCH_TEMPLATE_ID}
+    labels:
+      daytona-sandbox-windows: "true"
+    taints:
+      - key: sandbox-windows
+        value: "true"
+        effect: NoSchedule
+    volumeSize: 100
+VMEOF
+)
+  fi
   cat > "$CLUSTER_CONFIG" <<EOF
 apiVersion: eksctl.io/v1alpha5
 kind: ClusterConfig
@@ -140,6 +226,7 @@ managedNodeGroups:
         value: "true"
         effect: NoSchedule
     volumeSize: 100
+${VM_NODE_GROUP_YAML}
 EOF
   omc::log INFO "Creating EKS cluster (this takes 15-20 min)..."
   eksctl create cluster -f "$CLUSTER_CONFIG"

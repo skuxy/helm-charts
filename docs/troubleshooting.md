@@ -266,6 +266,32 @@ Not every chart `appVersion` has a published `daytonaio/daytona-runner-manager` 
 
 `services.runner.mainContainer.enabled: true` makes the DaemonSet bind hostPorts 3000/2220 on every sandbox node — the same ports the runner-manager's spawned pods need (hostNetwork). The manager's pods are also the only runners registered with Daytona Cloud, so the static ones add no capacity. Set `mainContainer.enabled: false` (sidecar-only host prep) whenever `runnermanager` is enabled.
 
+## runner-vm DaemonSet pod stuck `ContainerCreating` — `/dev/kvm is not a character device`
+
+`services.runnerVm` needs the node it lands on to actually have nested virtualization enabled at EC2 launch — being on a nested-virt-*capable* instance family (AWS: 7th/8th-gen Intel — `c7i`/`m7i`/`r7i`/`i7i`/`c8i`/`m8i`/`r8i`/`x8i` + flex/local-NVMe variants, per `aws ec2 describe-instance-types`'s `ProcessorInfo.SupportedFeatures`, not the CLI help text's narrower and stale "8th-gen only" claim; see `up.sh`'s `ENABLE_VM_NODE_POOL` handling) is necessary but not sufficient. `eksctl`'s managed-nodegroup schema has no field for the underlying EC2 `CpuOptions.NestedVirtualization` launch parameter, so a node pool provisioned without an explicit launch template carrying it comes up on the right family with `/dev/kvm` simply absent — confirmed live 2026-09-14 via `kubectl describe pod`: `MountVolume.SetUp failed for volume "dev-kvm" : hostPath type check failed: /dev/kvm is not a character device`.
+
+`up.sh` (from this fix onward) creates and attaches the needed launch template automatically for a **fresh** cluster/node-pool creation — nothing to do there. There is currently no equivalent automated path for repairing an **already-provisioned** node pool that's missing it (e.g. one created before this fix landed, or hand-rolled outside `up.sh`). If you hit this on an existing cluster, the manual remediation is:
+
+1. Create (or reuse) an EC2 launch template carrying just `CpuOptions.NestedVirtualization=enabled` — the *only* field it should own if you want `eksctl` to still auto-manage everything else on a **fresh** managed nodegroup. `aws ec2 create-launch-template --launch-template-data '{"CpuOptions":{"NestedVirtualization":"enabled"}}'`.
+2. `eksctl create nodegroup -f <yaml>` referencing it via `launchTemplate.id` alongside `instanceType`/`amiFamily`/`labels`/`taints`/`volumeSize` at the nodegroup level, as `up.sh` itself does — **this only works for a brand-new nodegroup**. Repairing an existing one is more involved: `eksctl` flatly rejects `instanceType`/`volumeSize` set at the nodegroup level once *any* custom `launchTemplate.id` is attached ("cannot set instanceType, ami, ... volumeSize ... in managedNodeGroup when a launch template is supplied") — those must move into the launch template itself. Worse, the moment the launch template also carries an explicit `ImageId` (required, because EKS's `CreateNodegroup` API rejects `amiType: CUSTOM` — which `eksctl` silently selects the instant *any* custom launch template is attached — without one), `eksctl` then *also* requires you to supply the full node-bootstrap `UserData` yourself and to drop `amiFamily` entirely ("node bootstrapping script (UserData) must be set when using a custom AMI" / "cannot set managedNodeGroup.ami when launchTemplate.ImageId is set"). In practice this meant extracting and adapting the real bootstrap `UserData` (a gzip+base64 `#cloud-config` blob invoking `/etc/eks/bootstrap.sh` and eksctl's own kubelet-label/taint injection scripts) from an already-working nodegroup's own auto-generated launch template — `aws ec2 describe-launch-template-versions --launch-template-id <existing-working-nodegroup's-LT-id> --query 'LaunchTemplateVersions[0].LaunchTemplateData.UserData'`, base64-decode, gunzip, swap the `NODE_LABELS`/`NODE_TAINTS` lines for the target nodegroup, re-gzip+base64, and bake it into the new launch template version along with `ImageId`/`InstanceType`.
+3. Create the fixed nodegroup under a new name (don't try to update the broken one in place), confirm `/dev/kvm` on the new node (`kubectl debug node/<node> -it --image=busybox -- ls -la /host/dev/kvm`), confirm the DaemonSet pod reschedules there and reaches `Ready`, then `eksctl delete nodegroup --name <broken-name>`.
+
+If you land here often enough that this is worth automating, the natural shape is an `up.sh --repair-node-pool` mode (or a standalone script) that does the launch-template-version/UserData-extraction dance above automatically — it doesn't exist yet.
+
+## helm upgrade silently drops the runner-vm nodeSelector override — `DESIRED=N/READY=0`, no scheduling error
+
+If your cluster needs `services.runnerVm.nodeSelector.<some-other-key>: null` (nulling out the chart's own default nodeSelector key so the DaemonSet doesn't end up requiring *both* that key and your actual selector on one node — Helm deep-merges maps, so a missing override just inherits the chart default instead of unsetting it), that override **must be passed explicitly on every single `helm upgrade`**, including ones using `--reuse-values`. Confirmed live: `--reuse-values` does not reliably re-apply a previously-set explicit `null` across releases — a plain `helm upgrade --reuse-values` reverted the nodeSelector to require both labels again, and the DaemonSet just silently never matched any node (`DESIRED=2 READY=0`, zero warning events). There is no chart-level fix for this yet — always pass the override values file (e.g. `-f values-runnervm-override.yaml`) by name on every upgrade; don't rely on `--reuse-values` to carry it.
+
+## runner-vm image pulls `docker.io/<your-registry-host>/...` and fails with `insufficient_scope` / "repository does not exist"
+
+`services.runnerVm.image.registry` and `.repository` are separate chart values; `registry` defaults to `docker.io`. Setting only `image.repository` to a fully-qualified private-registry host+path (e.g. an ECR URL) without also overriding `image.registry` produces a broken combined reference — the default `docker.io` gets prepended in front of your already-fully-qualified path. Set both explicitly when pointing at a private registry, e.g.:
+
+```
+--set services.runnerVm.image.registry=<account-id>.dkr.ecr.<region>.amazonaws.com \
+--set services.runnerVm.image.repository=<path>/runner-vm \
+--set services.runnerVm.image.tag=<tag>
+```
+
 ## Where to escalate
 
 - **Chart bug** (helm template fails, values key wrong, etc.) → file against the helm-charts repo with the rendered YAML + helm version.

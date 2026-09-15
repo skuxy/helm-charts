@@ -1,0 +1,131 @@
+{{- /*
+VM-backed (Windows / linux-vm) sandbox runner. See services.runnerVm's
+comment block in values.yaml for the architecture this mirrors and departs
+from relative to the container runner-daemonset.
+
+Unlike the container runner, there is no docker-installer / egress-enforcer /
+daemon-installer sidecar chain here: CLH/QEMU/Firecracker binaries and
+kernels are embedded in the runner-vm image itself (see runner-vm's
+docs/hypervisors.md "Embedded Binaries" table), so there is nothing to
+install onto the host node beyond what the image already carries. The
+tradeoff of that simplicity: unlike services.runner, this has never been run
+against a live cluster (see runnerVm's values.yaml comment) -- treat it as a
+first cut, not a validated deployment.
+*/ -}}
+{{- if .Values.services.runnerVm.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "daytona.fullname" . }}-runner-vm
+  namespace: {{ include "daytona.namespace" . }}
+  labels:
+    {{- include "daytona.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runner-vm
+  {{- with .Values.services.runnerVm.podAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "daytona.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: runner-vm
+      daytona.io/runner-vm: "true"
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      {{- with .Values.services.runnerVm.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "daytona.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: runner-vm
+        daytona.io/runner-vm: "true"
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      nodeSelector:
+        {{- toYaml .Values.services.runnerVm.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.services.runnerVm.tolerations | nindent 8 }}
+      # hostNetwork + hostPID: igniumd manages a TAP device inside a
+      # per-sandbox network namespace on the HOST (ip netns exec wrapper) --
+      # same reasoning as the container runner's runner-daemonset.yaml.
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- with .Values.dnsConfig }}
+      dnsConfig:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "daytona.serviceAccountName" (dict "Values" .Values "service" "runnerVm" "Chart" .Chart "Release" .Release) }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: runner-vm
+          image: "{{ required "services.runnerVm.image.registry is required (no default -- see values.yaml comment; a docker.io default silently breaks fully-qualified private-registry repository values)" (include "daytona.imageRegistry" (dict "Values" .Values "serviceRegistry" .Values.services.runnerVm.image.registry)) }}/{{ required "services.runnerVm.image.repository is required (no default -- see values.yaml comment)" .Values.services.runnerVm.image.repository }}:{{ required "services.runnerVm.image.tag is required" .Values.services.runnerVm.image.tag }}"
+          imagePullPolicy: {{ .Values.services.runnerVm.image.pullPolicy }}
+          securityContext:
+            privileged: true
+          ports:
+            - name: api
+              containerPort: {{ .Values.services.runnerVm.ports.api }}
+              hostPort: {{ .Values.services.runnerVm.ports.api }}
+            - name: ssh
+              containerPort: {{ .Values.services.runnerVm.ports.ssh }}
+              hostPort: {{ .Values.services.runnerVm.ports.ssh }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "daytona.fullname" . }}-runner-vm-config
+            - secretRef:
+                name: {{ include "daytona.fullname" . }}-runner-vm-secrets
+          env:
+            {{- if .Values.services.runnerVm.existingTokenSecret }}
+            - name: DAYTONA_RUNNER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.services.runnerVm.existingTokenSecret }}
+                  key: {{ .Values.services.runnerVm.existingTokenSecretKey | default "runner-token" }}
+            {{- end }}
+            {{- with .Values.services.runnerVm.extraEnv }}
+            {{- include "daytona.tplvalues.render" (dict "value" . "context" $) | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            # igniumd's data_dir: sandboxes/, snapshots/, netleash/ state.
+            # hostPath (not emptyDir) so sandbox state survives a pod restart
+            # on the same node -- an evicted/rescheduled pod still loses it,
+            # same tradeoff services.runner accepts for var-lib-daytona.
+            - name: data-dir
+              mountPath: {{ .Values.services.runnerVm.env.DAYTONA_DATA_DIR | default "/var/lib/daytona-vm" }}
+            # /dev/kvm: the actual floor requirement (runner-vm/README.md).
+            # Verified 2026-09-14: standard EKS node types (m8a.2xlarge) have
+            # NEITHER this device NOR vmx/svm CPU flags -- bare metal only.
+            - name: dev-kvm
+              mountPath: /dev/kvm
+            {{- with .Values.services.runnerVm.extraVolumeMounts }}
+            {{- include "daytona.tplvalues.render" (dict "value" . "context" $) | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.services.runnerVm.resources | nindent 12 }}
+      volumes:
+        - name: data-dir
+          hostPath:
+            path: {{ .Values.services.runnerVm.env.DAYTONA_DATA_DIR | default "/var/lib/daytona-vm" }}
+            type: DirectoryOrCreate
+        - name: dev-kvm
+          hostPath:
+            path: /dev/kvm
+            type: CharDevice
+        {{- with .Values.services.runnerVm.extraVolumes }}
+        {{- include "daytona.tplvalues.render" (dict "value" . "context" $) | nindent 8 }}
+        {{- end }}
+      {{- with .Values.services.runnerVm.affinity | default .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

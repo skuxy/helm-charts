@@ -750,6 +750,127 @@ services:
     extraVolumeMounts: []
     extraVolumes: []
 
+  # runnerVm: VM-backed (Windows / linux-vm) sandbox runner, built on runner-vm's
+  # `daytona-runner-vm` binary, which supervises `igniumd` (CLH/QEMU/Firecracker)
+  # as a child process. This is a SEPARATE runner identity from services.runner
+  # (container/sysbox) -- it registers with the control plane as its own Runner
+  # (sandboxClass: windows or linux-vm), obtained via POST /runners BEFORE this
+  # chart is installed (see runnerToken below). It does not use runner-manager
+  # or the docker-installer/egress-enforcer sidecars: CLH/QEMU/Firecracker
+  # binaries and kernels are embedded in the runner-vm image itself.
+  #
+  # First cut / not yet validated against a live cluster -- see
+  # docs/byoc-windows.md (once written) before relying on this in production.
+  runnerVm:
+    enabled: false
+    image:
+      # No default (unlike services.runner's docker.io + short repo path):
+      # runnerVm has no public image yet, and confirmed live 2026-09-14 that
+      # a "docker.io" default silently produces a broken
+      # "docker.io/<your-registry-host>/<path>" reference for anyone pointing
+      # repository at a fully-qualified private registry (e.g. ECR) without
+      # separately overriding registry -- ImagePullBackOff / insufficient_scope,
+      # no hint the real cause is a values mismatch. Required, same as
+      # repository/tag below, so a missing override fails loud at template time.
+      registry: ""
+      # No published image name confirmed at authoring time -- runner-vm's repo
+      # has no top-level release Dockerfile checked in. Set explicitly; the
+      # chart intentionally does NOT guess a default here.
+      repository: ""
+      tag: ""
+      pullPolicy: IfNotPresent
+    # Runner API token (DAYTONA_RUNNER_TOKEN), obtained by calling
+    # POST /runners with sandboxClass: "windows" (or "linux-vm") against the
+    # Daytona API BEFORE installing/upgrading with runnerVm.enabled=true.
+    # This chart does not perform that registration itself -- unlike
+    # services.runner (registered on-demand by runner-manager), a VM runner's
+    # identity/class is fixed at registration time, done once, out of band.
+    # Provide the resulting token directly, or via an existing secret.
+    runnerToken: ""
+    # Use an existing secret for runnerToken instead of the value above.
+    # Secret must contain a key named by existingTokenSecretKey.
+    existingTokenSecret: ""
+    existingTokenSecretKey: "runner-token"
+    # sandboxClass this runner was registered as -- informational only (must
+    # match what was passed to POST /runners); not sent anywhere by the chart.
+    sandboxClass: "windows"
+    ports:
+      api: 3000
+      ssh: 2220
+    # igniumd hypervisor backend: "clh" (Cloud Hypervisor) or "qemu". CLH is
+    # the simpler/newer API (single vm.resize for CPU+memory) and is the one
+    # with documented Windows production hardening (see runner-vm's
+    # docs/hypervisors.md); default to it over "fc" (Firecracker, which
+    # CANNOT boot Windows -- rejected at the runner-vm server layer).
+    backend: "clh"
+    env:
+      DAYTONA_API_URL: ""
+      DAYTONA_DATA_DIR: "/var/lib/daytona-vm"
+      DAYTONA_LOG_LEVEL: "info"
+      DAYTONA_ARCHIVE_ON_STOP: "false"
+      SSH_GATEWAY_ENABLE: "true"
+      SSH_PUBLIC_KEY: ""
+    # igniumd snapshot storage: "s3", "azure", or "oci". Empty backend leaves
+    # igniumd on its "local" default, which does NOT survive pod
+    # rescheduling -- set one of these for anything beyond a single-node
+    # smoke test. Matches runner-vm's pkg/config.StorageConfig; see
+    # runner-vm/docs/config.md for the full field set.
+    storage:
+      backend: ""
+      s3:
+        bucket: ""
+        region: ""
+        endpoint: ""
+        accessKey: ""
+        secretKey: ""
+      azure:
+        connectionString: ""
+        accountUrl: ""
+        container: ""
+      oci:
+        registry: ""
+        repository: ""
+        username: ""
+        password: ""
+    resources:
+      limits:
+        cpu: 4000m
+        memory: 8Gi
+      requests:
+        cpu: 2000m
+        memory: 4Gi
+    # Nodes must expose /dev/kvm -- standard (non-metal) cloud instances do
+    # NOT (verified 2026-09-14 against a live EKS m8a.2xlarge node: no
+    # /dev/kvm, no vmx/svm CPU flags at all) unless nested virtualization was
+    # explicitly enabled at instance launch (see up.sh's ENABLE_VM_NODE_POOL)
+    # or the node is bare metal.
+    #
+    # Empty by default (matches nodeSelector: {} elsewhere in this file) --
+    # deliberately NOT a hardcoded default key. A prior default here
+    # (daytona-sandbox-vm: "true") required every real deployment whose node
+    # label differs (e.g. the Windows dogfood path's daytona-sandbox-windows)
+    # to null it back out via a separate override file, and confirmed live
+    # 2026-09-14 that `helm upgrade --reuse-values` does not reliably
+    # re-apply a previously-set explicit `null` across releases -- silently
+    # reverting the DaemonSet to require BOTH labels, matching no node, with
+    # zero error (DESIRED=N/READY=0). Set the label(s) your node pool
+    # actually carries here explicitly; there is nothing to null out.
+    nodeSelector: {}
+    tolerations:
+      - key: "sandbox"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+    affinity: {}
+    podAnnotations: {}
+    serviceAccount:
+      create: true
+      annotations: {}
+      name: ""
+    extraEnv: []
+    extraVolumeMounts: []
+    extraVolumes: []
+
 # Region registration configuration
 # When enabled, a pre-install hook will call the Daytona API to register this region
 # and store the response in a Kubernetes secret for use by other services

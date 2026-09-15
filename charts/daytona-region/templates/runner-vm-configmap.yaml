@@ -1,0 +1,53 @@
+{{- if .Values.services.runnerVm.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "daytona.fullname" . }}-runner-vm-config
+  namespace: {{ include "daytona.namespace" . }}
+  labels:
+    {{- include "daytona.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runner-vm
+data:
+  # daytona-runner-vm (see runner-vm/runner/pkg/runner/config.go GenerateEnv
+  # for the authoritative env var contract).
+  DAYTONA_DATA_DIR: {{ .Values.services.runnerVm.env.DAYTONA_DATA_DIR | default "/var/lib/daytona-vm" | quote }}
+  DAYTONA_LOG_LEVEL: {{ .Values.services.runnerVm.env.DAYTONA_LOG_LEVEL | default "info" | quote }}
+  DAYTONA_ARCHIVE_ON_STOP: {{ .Values.services.runnerVm.env.DAYTONA_ARCHIVE_ON_STOP | default "false" | quote }}
+  DAYTONA_API_PORT: {{ .Values.services.runnerVm.ports.api | quote }}
+  SSH_GATEWAY_ENABLE: {{ .Values.services.runnerVm.env.SSH_GATEWAY_ENABLE | default "true" | quote }}
+  SSH_GATEWAY_PORT: {{ .Values.services.runnerVm.ports.ssh | quote }}
+  # igniumd (see runner-vm/pkg/config/config.go): the daytona-runner-vm
+  # supervisor spawns igniumd as a child process that inherits this pod's
+  # environment, so igniumd's own IGNIUM_* config is set here directly rather
+  # than through a separate mounted config file.
+  IGNIUM_DATA_DIR: {{ .Values.services.runnerVm.env.DAYTONA_DATA_DIR | default "/var/lib/daytona-vm" | quote }}
+  IGNIUM_BACKEND: {{ .Values.services.runnerVm.backend | default "clh" | quote }}
+  {{- if .Values.services.runnerVm.storage.backend }}
+  IGNIUM_STORAGE__BACKEND: {{ .Values.services.runnerVm.storage.backend | quote }}
+  {{- if eq .Values.services.runnerVm.storage.backend "s3" }}
+  IGNIUM_STORAGE__S3_BUCKET: {{ .Values.services.runnerVm.storage.s3.bucket | quote }}
+  # S3 credentials/region use the AWS SDK's own default credential chain
+  # (AWS_REGION / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, or IAM role) per
+  # runner-vm's StorageConfig doc comment -- NOT an IGNIUM_STORAGE__ field.
+  # IGNIUM_STORAGE__S3_REGION is set too since it is a distinct koanf field;
+  # keep both in sync.
+  IGNIUM_STORAGE__S3_REGION: {{ .Values.services.runnerVm.storage.s3.region | quote }}
+  AWS_REGION: {{ .Values.services.runnerVm.storage.s3.region | quote }}
+  {{- if .Values.services.runnerVm.storage.s3.endpoint }}
+  IGNIUM_STORAGE__S3_ENDPOINT: {{ .Values.services.runnerVm.storage.s3.endpoint | quote }}
+  {{- end }}
+  {{- else if eq .Values.services.runnerVm.storage.backend "azure" }}
+  IGNIUM_STORAGE__AZURE_CONTAINER: {{ .Values.services.runnerVm.storage.azure.container | quote }}
+  {{- if .Values.services.runnerVm.storage.azure.accountUrl }}
+  IGNIUM_STORAGE__AZURE_ACCOUNT_URL: {{ .Values.services.runnerVm.storage.azure.accountUrl | quote }}
+  {{- end }}
+  {{- else if eq .Values.services.runnerVm.storage.backend "oci" }}
+  IGNIUM_STORAGE__OCI_REGISTRY: {{ .Values.services.runnerVm.storage.oci.registry | quote }}
+  IGNIUM_STORAGE__OCI_REPOSITORY: {{ .Values.services.runnerVm.storage.oci.repository | quote }}
+  {{- end }}
+  {{- else }}
+  # storage.backend unset: igniumd falls back to its "local" storage driver,
+  # which does NOT survive pod rescheduling. Fine for a single-node smoke
+  # test only -- set services.runnerVm.storage.backend for anything else.
+  {{- end }}
+{{- end }}
