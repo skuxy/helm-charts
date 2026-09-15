@@ -97,9 +97,9 @@ lockstep; upgrade via the chart, not by overriding image tags.
 | Improvement | Values key(s) | Doc |
 |---|---|---|
 | Stale runner cleanup | `services.runnerReaper` | [`operations.md`](operations.md#runner-reaper) |
-| Fractional vCPU and density guidance | `services.runner.sandboxResources`, `services.api.sandboxDensity` | [`operations.md`](operations.md#sandbox-sizing-and-density) |
+| Fractional vCPU and density guidance | `services.runner.sandboxResources` | [`operations.md`](operations.md#sandbox-sizing-and-density) |
 | Sandbox egress lockdown and DNS hardening | `services.runner.networkPolicy`, `services.runner.dockerInstaller.dns`, `services.runner.buildkit.dns` | [`operations.md`](operations.md#sandbox-network-security-and-dns) |
-| Volume backends and mount-binary preflight | `services.runner.volumes`, `scripts/preflight/check-volume-backend.sh` | [`operations.md`](operations.md#sandbox-volumes) |
+| Volume backends and mount-binary preflight | `services.runner.volumes` | [`operations.md`](operations.md#sandbox-volumes) |
 
 ## Known limitations
 

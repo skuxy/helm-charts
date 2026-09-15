@@ -32,7 +32,12 @@ omc::log INFO "=== Daytona BYOC: Azure teardown for cluster '$CLUSTER_NAME' in R
 omc::confirm "This will DELETE the resource group '$RESOURCE_GROUP' (AKS + storage + everything). Proceed?" \
   || { omc::log INFO "Aborted by operator."; exit 0; }
 
-omc::need_cmd az kubectl helm
+omc::need_cmd az kubectl helm jq
+
+# === 0. Deregister runners + region from Daytona Cloud =======================
+# See omc::daytona_deregister_region in ../_lib/common.sh for why this exists
+# and why it must run first, before any K8s/Azure teardown below.
+omc::daytona_deregister_region
 
 # === 1. helm uninstall + delete namespace ====================================
 if kubectl get ns daytona >/dev/null 2>&1; then

@@ -48,6 +48,11 @@ omc::confirm "This will DELETE the EKS cluster + S3 bucket + IAM resources for '
 
 omc::need_cmd aws eksctl kubectl helm jq
 
+# === 0. Deregister runners + region from Daytona Cloud =======================
+# See omc::daytona_deregister_region in ../_lib/common.sh for why this exists
+# and why it must run first, before any K8s/AWS teardown below.
+omc::daytona_deregister_region
+
 # === 1. helm uninstall + delete namespace ====================================
 if kubectl get ns daytona >/dev/null 2>&1; then
   helm uninstall daytona-region -n daytona --wait --timeout 5m 2>/dev/null \
@@ -66,6 +71,8 @@ fi
 # cluster still exists (eksctl delete does NOT remove it -> leak otherwise).
 OIDC_ISSUER="$(aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" \
   --query 'cluster.identity.oidc.issuer' --output text 2>/dev/null || true)"
+VPC_ID="$(aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" \
+  --query 'cluster.resourcesVpcConfig.vpcId' --output text 2>/dev/null || true)"
 if kubectl cluster-info >/dev/null 2>&1; then
   while IFS= read -r lb_line; do
     [[ -z "$lb_line" ]] && continue
@@ -74,6 +81,40 @@ if kubectl cluster-info >/dev/null 2>&1; then
       && omc::log INFO "released LoadBalancer svc $lb_line" || true
   done < <(kubectl get svc -A \
       -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null)
+fi
+
+# === 1c. Release account-wide GuardDuty EKS Protection resources =============
+# If GuardDuty's EKS Runtime Monitoring / Protection is enabled account- or
+# org-wide, AWS auto-injects a `guardduty-data` VPC interface endpoint (with
+# one ENI per subnet) AND a GuardDutyManagedSecurityGroup-<vpc-id> security
+# group into EVERY new VPC — completely outside eksctl's knowledge, since
+# eksctl's own CloudFormation stack didn't create them. eksctl's VPC delete
+# then fails ~30s into a LONG (10-15+ min) teardown with "has dependencies
+# and cannot be deleted", on the ENIs first (blocking subnets), then on the
+# security group (blocking the VPC itself) once the endpoint is gone.
+# Confirmed live: this VPC-endpoint-then-security-group sequence is exactly
+# what blocked a real dogfood teardown, requiring two separate manual
+# `eksctl delete cluster` retries to work through both blockers in order.
+# Harmless no-op if GuardDuty EKS Protection isn't enabled for this account.
+if [[ -n "$VPC_ID" && "$VPC_ID" != "None" ]]; then
+  GD_VPCE_IDS="$(aws ec2 describe-vpc-endpoints --region "$AWS_REGION" \
+    --filters "Name=vpc-id,Values=$VPC_ID" "Name=service-name,Values=com.amazonaws.${AWS_REGION}.guardduty-data" \
+    --query 'VpcEndpoints[].VpcEndpointId' --output text 2>/dev/null || true)"
+  if [[ -n "$GD_VPCE_IDS" ]]; then
+    aws ec2 delete-vpc-endpoints --region "$AWS_REGION" --vpc-endpoint-ids $GD_VPCE_IDS >/dev/null 2>&1 \
+      && omc::log INFO "released GuardDuty VPC endpoint(s): $GD_VPCE_IDS" \
+      || omc::log WARN "failed to delete GuardDuty VPC endpoint(s): $GD_VPCE_IDS (continuing)"
+    # ENI detachment lags the endpoint delete call by a few seconds.
+    sleep 15
+  fi
+  GD_SG_ID="$(aws ec2 describe-security-groups --region "$AWS_REGION" \
+    --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=GuardDutyManagedSecurityGroup-*" \
+    --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || true)"
+  if [[ -n "$GD_SG_ID" && "$GD_SG_ID" != "None" ]]; then
+    aws ec2 delete-security-group --region "$AWS_REGION" --group-id "$GD_SG_ID" >/dev/null 2>&1 \
+      && omc::log INFO "released GuardDuty security group: $GD_SG_ID" \
+      || omc::log WARN "failed to delete GuardDuty security group $GD_SG_ID (continuing)"
+  fi
 fi
 
 # === 2. eksctl delete cluster ================================================

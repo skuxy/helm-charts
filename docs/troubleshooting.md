@@ -225,7 +225,7 @@ That is the gate doing its job: `services.runner.volumes.backend` is set but the
 kubectl logs -n daytona job/daytona-volume-preflight
 ```
 
-— then either bake the binary into a custom runner image (see [`operations.md`](operations.md#sandbox-volumes) for a Dockerfile example), switch to `backend: rclone` (musl-friendly), or set `volumes.backend: ""` to disable volume support. To validate an image before touching the release: `scripts/preflight/check-volume-backend.sh <backend> <image>`.
+— then either bake the binary into a custom runner image (see [`operations.md`](operations.md#sandbox-volumes) for a Dockerfile example), switch to `backend: rclone` (musl-friendly), or set `volumes.backend: ""` to disable volume support. The `daytona-volume-preflight` Job you just read logs from (`charts/daytona-region/templates/runner-volume-preflight-job.yaml`) IS the validation step — it runs automatically on every `helm install`/`upgrade`; there is no separate standalone script to run by hand before that.
 
 ## SSH connects, then the session closes immediately
 

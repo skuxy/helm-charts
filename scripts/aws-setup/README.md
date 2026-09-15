@@ -101,7 +101,7 @@ actions involved.
 | 10 | Install cert-manager + ClusterIssuer for wildcard TLS | ✅ DNS-01 / Let's Encrypt |
 | 11 | `helm install daytona-region` — registers the region **and** brings up proxy, snapshot-manager, runner-manager, and the runner DaemonSet | ✅ helm install |
 | 12 | Watch runner pods land on the sandbox nodes and register with Daytona Cloud | ✅ `kubectl -n daytona get pods` |
-| 13 | Validate with the SDK | ✅ `e2e.sh` runs `daytona.create(target=<region>)` |
+| 13 | Validate with the SDK | ✅ `e2e.sh` runs `DaytonaConfig(target=<region>)` + `daytona.create(...)` |
 
 The chart's `region-registration` pre-install hook registers the region with
 Daytona Cloud; the `runner-manager` Deployment then registers individual
@@ -155,6 +155,15 @@ These surface during a real deployment.
    call the API or visit the dashboard. The [`teardown.sh`](./teardown.sh)
    script in this directory handles deregistration as part of cleanup.
 
+7. **Region registration silently requires a feature flag most orgs don't
+   have.** `POST /api/regions` is gated behind the `organization_infrastructure`
+   feature flag (PostHog-managed, not self-service). If it's disabled, the
+   pre-install hook Job fails with a plain `404 Cannot POST /api/regions` —
+   indistinguishable from a genuine routing/CDN problem, with no hint a
+   feature flag is involved anywhere in the error path. Confirm the flag is
+   enabled for your org (and be aware targeting may be per-user, not just
+   per-org) *before* troubleshooting anything else if registration 404s.
+
 ## Capacity sizing
 
 Sandbox capacity comes from the **sandbox node pool**, not from separate VMs.
@@ -178,6 +187,7 @@ is enough.
 | Thing | Where it comes from |
 |---|---|
 | `DAYTONA_API_KEY` | Organization API key from https://app.daytona.io/dashboard/keys |
+| `organization_infrastructure` feature flag | **Must be enabled for your org before you start.** Not self-service — ask whoever administers PostHog feature flags for Daytona to enable it for your org (and note: targeting may be keyed on your individual user, not just the org — see below). Without it, `POST /api/regions` returns a plain `404 Cannot POST /api/regions` that looks exactly like a routing/infra bug and gives zero indication a feature flag is involved. This cost real debugging time while dogfooding — check this FIRST if region registration 404s. |
 | `BASE_DOMAIN` | A subdomain you own (e.g. `byoc.yourdomain.com`); the chart derives `proxy.<domain>`, `*.proxy.<domain>`, and `snapshots.<domain>` |
 | Let's Encrypt email | Used for the cert-manager ClusterIssuer registration |
 | DNS provider API token | For DNS-01 wildcard issuance (e.g. a Cloudflare "Edit zone DNS" token scoped to your zone) |
@@ -219,12 +229,51 @@ When the chart is up:
 # Region + region infra pods (proxy, snapshot-manager, runner-manager, runner)
 kubectl -n daytona get pods
 
-# SDK smoke test: daytona.create(target=<region>) then code_run("...")
+# SDK smoke test: DaytonaConfig(target=<region>) + daytona.create(...) then code_run("...")
 ./e2e.sh
 
 # Tear everything down (also deregisters the region from Daytona Cloud)
 ./teardown.sh
 ```
+
+## Using the region from your own code
+
+Two things trip up every first attempt at this, back to back — hit both
+while dogfooding today, worth having in one place instead of reverse-
+engineering from `e2e.sh`'s source:
+
+1. **`target` goes on `DaytonaConfig`, not on `create()`.** There is no
+   `target=` kwarg on `daytona.create(...)` — passing one raises
+   `TypeError: Daytona.create() got an unexpected keyword argument 'target'`.
+   The region is set once, for the whole client:
+
+   ```python
+   from daytona import Daytona, DaytonaConfig, CreateSandboxFromImageParams, Image
+
+   daytona = Daytona(DaytonaConfig(
+       api_key="dtn_...",                        # the ORG key, not a runner-scoped one
+       target="your-region-name",                # exactly REGION_NAME from up.sh's prompts
+   ))
+   ```
+
+2. **There is no default snapshot in a BYOC region.** Daytona-managed
+   regions have an org-default snapshot (`daytonaio/sandbox:X`) that
+   `daytona.create()` falls back to when you don't specify one; that
+   snapshot is never replicated to custom BYOC regions. Calling
+   `daytona.create()` with no image fails with
+   `Snapshot daytonaio/sandbox:X is not available in region <your-region>`.
+   Always pass an explicit image:
+
+   ```python
+   sandbox = daytona.create(CreateSandboxFromImageParams(
+       image=Image.debian_slim("3.12"),          # or Image.base("alpine:3.21"), etc.
+   ))
+   sandbox.process.code_run("print('hello')")
+   sandbox.delete()
+   ```
+
+See `e2e.sh` for a fuller worked example (public image + declarative
+builder + private ECR paths).
 
 ## Layout
 
@@ -241,7 +290,7 @@ aws-setup/
 │                                  # S3 bucket + IAM keys / IRSA role). Wires
 │                                  # snapshot-manager AND runner to the same
 │                                  # bucket so the declarative builder works.
-├── e2e.sh                         # SDK test: daytona.create(target=region)
+├── e2e.sh                         # SDK test: DaytonaConfig(target=region) + daytona.create(...)
 │                                  # then code_run("print('Hello World')").
 ├── .state/                        # generated at runtime (region-id, names,
 │                                  # IAM keys, rendered manifests). gitignored.
