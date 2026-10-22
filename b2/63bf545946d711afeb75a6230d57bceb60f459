@@ -1,0 +1,13 @@
+scripts/gcs-setup/values-region.yaml.tmpl
+  ai_agent 107-110,112
+scripts/azure-setup/values-region.yaml.tmpl
+  ai_agent 108-111,113
+scripts/aws-setup/values-region.yaml.tmpl
+  ai_agent 127-130,132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b263bf545946d711afeb75a6230d57bceb60f459",
+  "prompts": {}
+}
