@@ -1,0 +1,25 @@
+charts/daytona-region/templates/runner-daemonset.yaml
+  s_efd57b5ca898b8::t_f72914f591aa14 156-163,172-173,177,182
+  s_efd57b5ca898b8::t_917718547b4d1e 166
+  s_efd57b5ca898b8::t_fbb9d0bef44f70 209
+charts/daytona-region/tests/baselines/rendered-baseline.yaml
+  s_efd57b5ca898b8::t_5117844a872b19 391-398,401,407-408,412,417,444
+charts/daytona-region/tests/runner_snapshot_route_test.rb
+  s_efd57b5ca898b8::t_6a4627a7b896a3 123-163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "4af0921c38450fc75671141fbc1cc09d5be88ec4",
+  "prompts": {},
+  "sessions": {
+    "s_efd57b5ca898b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c4652ee-31b6-4496-af1c-a5d276e949b7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Borna Skukan <bskukan@daytona.io>"
+    }
+  }
+}
