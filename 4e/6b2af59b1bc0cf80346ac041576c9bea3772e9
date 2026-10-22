@@ -1,0 +1,23 @@
+charts/daytona-region/templates/runner-daemonset.yaml
+  s_efd57b5ca898b8::t_b499df7d763873 238,240
+charts/daytona-region/tests/runner-host-aliases_test.yaml
+  s_efd57b5ca898b8::t_b499df7d763873 119,160
+charts/daytona-region/tests/runner_snapshot_route_test.rb
+  s_efd57b5ca898b8::t_b499df7d763873 36-41,78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "4e6b2af59b1bc0cf80346ac041576c9bea3772e9",
+  "prompts": {},
+  "sessions": {
+    "s_efd57b5ca898b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c4652ee-31b6-4496-af1c-a5d276e949b7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Borna Skukan <bskukan@daytona.io>"
+    }
+  }
+}
