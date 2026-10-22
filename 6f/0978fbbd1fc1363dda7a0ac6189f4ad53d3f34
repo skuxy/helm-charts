@@ -1,0 +1,11 @@
+scripts/azure-setup/migrate-oss-to-byoc.sh
+  ai_agent 218-220
+scripts/azure-setup/values-region.yaml.tmpl
+  ai_agent 94-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6f0978fbbd1fc1363dda7a0ac6189f4ad53d3f34",
+  "prompts": {}
+}
