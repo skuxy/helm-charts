@@ -1,0 +1,13 @@
+charts/daytona-region/tests/runner_snapshot_route_test.rb
+  ai_agent 36-41,78
+charts/daytona-region/templates/runner-daemonset.yaml
+  ai_agent 243,245
+charts/daytona-region/tests/runner-host-aliases_test.yaml
+  ai_agent 119,160
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ff440dba5eba3ebc36d7ff2fb9796d699d9286d5",
+  "prompts": {}
+}
