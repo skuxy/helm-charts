@@ -1,0 +1,9 @@
+docs/troubleshooting.md
+  ai_agent 85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "eb4c8f544444d6d7c8badf5fb21936f645c70f7d",
+  "prompts": {}
+}
