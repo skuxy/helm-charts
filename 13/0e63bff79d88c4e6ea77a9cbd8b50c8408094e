@@ -1,0 +1,33 @@
+.github/workflows/daytona-region.yaml
+  s_c730f0f8205902::t_90b5808b38f7ce 1-37
+charts/daytona-region/README.md
+  s_c730f0f8205902::t_490c0b5e738928 130-242
+charts/daytona-region/templates/region-registration-hook.yaml
+  s_c730f0f8205902::t_324101f28095b2 1-3,44-48,80-107,170-173,236-239
+charts/daytona-region/tests/region-registration_test.yaml
+  s_c730f0f8205902::t_daeeb536c043f0 1-51
+charts/daytona-region/values.yaml
+  s_c730f0f8205902::t_32bb5b62355fb5 29-36,816-819,826
+tests/daytona-region/README.md
+  s_c730f0f8205902::t_9588d16b285052 1-26
+tests/daytona-region/requirements.txt
+  s_c730f0f8205902::t_ad67d8d4ef27c1 1
+tests/daytona-region/test_registration.py
+  s_c730f0f8205902::t_56f0d3e2f197c2 1-246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "130e63bff79d88c4e6ea77a9cbd8b50c8408094e",
+  "prompts": {},
+  "sessions": {
+    "s_c730f0f8205902": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bd2b985-2e5c-469e-861d-e4153c5733a2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Borna Skukan <bskukan@daytona.io>"
+    }
+  }
+}
