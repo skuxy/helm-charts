@@ -1,0 +1,19 @@
+charts/daytona-region/Chart.yaml
+  s_c730f0f8205902::t_222f7530ff8b0b 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2f83b25447d7d5e53435495707fbe9e050c1a9dc",
+  "prompts": {},
+  "sessions": {
+    "s_c730f0f8205902": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bd2b985-2e5c-469e-861d-e4153c5733a2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Borna Skukan <bskukan@daytona.io>"
+    }
+  }
+}
